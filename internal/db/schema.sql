@@ -1,0 +1,31 @@
+CREATE TABLE IF NOT EXISTS agents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    role TEXT NOT NULL,
+    dir TEXT NOT NULL,
+    spec_path TEXT,
+    tmux_session TEXT NOT NULL,
+    tmux_window TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_activity DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_source TEXT NOT NULL,
+    to_agent TEXT NOT NULL,
+    content TEXT NOT NULL,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    delivered_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_name TEXT NOT NULL,
+    run_at DATETIME NOT NULL,
+    note TEXT NOT NULL,
+    executed INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
