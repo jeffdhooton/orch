@@ -19,6 +19,8 @@ import (
 	"github.com/jeffdhooton/orch/internal/db"
 	"github.com/jeffdhooton/orch/internal/messenger"
 	"github.com/jeffdhooton/orch/internal/scheduler"
+	"github.com/jeffdhooton/orch/internal/specgen/analyze"
+	"github.com/jeffdhooton/orch/internal/specgen/generate"
 	"github.com/jeffdhooton/orch/internal/tmux"
 	"github.com/spf13/cobra"
 )
@@ -45,6 +47,7 @@ func main() {
 		watchCmd(log),
 		attachCmd(log),
 		statusCmd(log),
+		specgenCmd(log),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -621,6 +624,151 @@ func statusCmd(log *slog.Logger) *cobra.Command {
 
 			return nil
 		},
+	}
+}
+
+func specgenCmd(log *slog.Logger) *cobra.Command {
+	var dir, task, output, roles string
+	var analyzeOnly bool
+
+	cmd := &cobra.Command{
+		Use:   "specgen",
+		Short: "Generate role-specific specs for multi-agent workflows",
+		Long:  "Analyzes a codebase and generates engineer, PM, and reviewer specs.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if dir == "" {
+				var err error
+				dir, err = os.Getwd()
+				if err != nil {
+					return fmt.Errorf("getting working directory: %w", err)
+				}
+			}
+
+			// Verify directory exists
+			info, err := os.Stat(dir)
+			if err != nil {
+				return fmt.Errorf("directory %q: %w", dir, err)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("%q is not a directory", dir)
+			}
+
+			// Run analysis
+			fmt.Fprintf(os.Stderr, "Analyzing codebase at %s...\n", dir)
+			result, err := analyze.Analyze(dir)
+			if err != nil {
+				return fmt.Errorf("analyzing codebase: %w", err)
+			}
+
+			// If --analyze, print and exit
+			if analyzeOnly {
+				printAnalysis(result)
+				return nil
+			}
+
+			// Need --task for generation
+			if task == "" {
+				return fmt.Errorf("--task is required (or use --analyze)")
+			}
+
+			// Parse roles
+			roleList := parseRoles(roles)
+
+			// Set output directory
+			if output == "" {
+				output = dir + "/specs"
+			}
+
+			// Generate specs
+			gen := generate.New()
+			return gen.Generate(cmd.Context(), generate.GenerateOpts{
+				Analysis:  result,
+				Task:      task,
+				Roles:     roleList,
+				OutputDir: output,
+			})
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", "", "Target codebase directory (defaults to current directory)")
+	cmd.Flags().StringVar(&task, "task", "", "Task description for spec generation")
+	cmd.Flags().StringVar(&output, "output", "", "Output directory (default: <dir>/specs/)")
+	cmd.Flags().StringVar(&roles, "roles", "engineer,pm,reviewer", "Comma-separated roles to generate")
+	cmd.Flags().BoolVar(&analyzeOnly, "analyze", false, "Just print codebase analysis, skip generation")
+
+	return cmd
+}
+
+func parseRoles(s string) []string {
+	var roles []string
+	for _, r := range strings.Split(s, ",") {
+		r = strings.TrimSpace(r)
+		if r != "" {
+			roles = append(roles, r)
+		}
+	}
+	return roles
+}
+
+func printAnalysis(a *analyze.Analysis) {
+	fmt.Printf("# Codebase Analysis: %s\n\n", a.Dir)
+
+	fmt.Printf("## Tech Stack\n")
+	fmt.Printf("- Language: %s\n", a.Stack.Language)
+	if a.Stack.Framework != "" {
+		fmt.Printf("- Framework: %s\n", a.Stack.Framework)
+	}
+	fmt.Printf("- Build: %s\n", a.Stack.BuildCmd)
+	fmt.Printf("- Test: %s\n", a.Stack.TestCmd)
+	if a.Stack.LintCmd != "" {
+		fmt.Printf("- Lint: %s\n", a.Stack.LintCmd)
+	}
+	if len(a.Stack.Dependencies) > 0 {
+		fmt.Printf("- Dependencies: %s\n", strings.Join(a.Stack.Dependencies, ", "))
+	}
+	fmt.Println()
+
+	fmt.Printf("## Project Structure\n")
+	fmt.Printf("- Top-level dirs: %s\n", strings.Join(a.Structure.TopLevelDirs, ", "))
+	fmt.Printf("- Total files: %d\n", a.Structure.TotalFiles)
+	if len(a.Structure.KeyFiles) > 0 {
+		fmt.Printf("- Key files: %s\n", strings.Join(a.Structure.KeyFiles, ", "))
+	}
+	if len(a.Structure.TestFiles) > 0 {
+		fmt.Printf("- Test files: %s\n", strings.Join(a.Structure.TestFiles, ", "))
+	}
+	if len(a.Structure.FilesByExt) > 0 {
+		fmt.Printf("- Files by type: ")
+		parts := make([]string, 0, len(a.Structure.FilesByExt))
+		for ext, count := range a.Structure.FilesByExt {
+			parts = append(parts, fmt.Sprintf("%s=%d", ext, count))
+		}
+		fmt.Println(strings.Join(parts, ", "))
+	}
+	fmt.Println()
+
+	if a.Git.Branch != "" {
+		fmt.Printf("## Git State\n")
+		fmt.Printf("- Branch: %s\n", a.Git.Branch)
+		fmt.Printf("- Uncommitted changes: %v\n", a.Git.HasUncommitted)
+		if a.Git.RemoteURL != "" {
+			fmt.Printf("- Remote: %s\n", a.Git.RemoteURL)
+		}
+		if len(a.Git.RecentCommits) > 0 {
+			fmt.Printf("- Recent commits:\n")
+			for _, c := range a.Git.RecentCommits {
+				fmt.Printf("  %s\n", c)
+			}
+		}
+		fmt.Println()
+	}
+
+	if len(a.Documentation) > 0 {
+		fmt.Printf("## Documentation\n")
+		for _, doc := range a.Documentation {
+			fmt.Printf("- %s (%d lines)\n", doc.Path, strings.Count(doc.Content, "\n"))
+		}
+		fmt.Println()
 	}
 }
 
