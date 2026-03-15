@@ -1,0 +1,12 @@
+# Binary
+orch
+/orch
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store

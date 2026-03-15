@@ -7,13 +7,13 @@ Spin up named agents with roles, let them communicate with each other, schedule 
 ## Install
 
 ```bash
-go install github.com/jhoot/orch/cmd/orch@latest
+go install github.com/jeffdhooton/orch/cmd/orch@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/jhoot/orch.git
+git clone https://github.com/jeffdhooton/orch.git
 cd orch
 go build -o orch ./cmd/orch
 ```

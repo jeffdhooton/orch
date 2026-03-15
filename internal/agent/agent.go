@@ -11,8 +11,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/jhoot/orch/internal/db"
-	"github.com/jhoot/orch/internal/tmux"
+	"github.com/jeffdhooton/orch/internal/db"
+	"github.com/jeffdhooton/orch/internal/tmux"
 )
 
 const (

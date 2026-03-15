@@ -12,12 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jhoot/orch/internal/agent"
-	"github.com/jhoot/orch/internal/dashboard"
-	"github.com/jhoot/orch/internal/db"
-	"github.com/jhoot/orch/internal/messenger"
-	"github.com/jhoot/orch/internal/scheduler"
-	"github.com/jhoot/orch/internal/tmux"
+	"github.com/jeffdhooton/orch/internal/agent"
+	"github.com/jeffdhooton/orch/internal/dashboard"
+	"github.com/jeffdhooton/orch/internal/db"
+	"github.com/jeffdhooton/orch/internal/messenger"
+	"github.com/jeffdhooton/orch/internal/scheduler"
+	"github.com/jeffdhooton/orch/internal/tmux"
 	"github.com/spf13/cobra"
 )
 

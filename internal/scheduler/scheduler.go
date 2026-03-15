@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jhoot/orch/internal/db"
-	"github.com/jhoot/orch/internal/messenger"
+	"github.com/jeffdhooton/orch/internal/db"
+	"github.com/jeffdhooton/orch/internal/messenger"
 )
 
 // Scheduler polls for due schedules and agent file-based requests.

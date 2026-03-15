@@ -12,10 +12,10 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/jhoot/orch/internal/agent"
-	"github.com/jhoot/orch/internal/messenger"
-	"github.com/jhoot/orch/internal/scheduler"
-	"github.com/jhoot/orch/internal/tmux"
+	"github.com/jeffdhooton/orch/internal/agent"
+	"github.com/jeffdhooton/orch/internal/messenger"
+	"github.com/jeffdhooton/orch/internal/scheduler"
+	"github.com/jeffdhooton/orch/internal/tmux"
 )
 
 // Run starts the dashboard TUI. It blocks until the user quits.
