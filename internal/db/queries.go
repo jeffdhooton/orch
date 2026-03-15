@@ -167,20 +167,37 @@ func MarkMessageDelivered(db *sql.DB, id int64) error {
 	return nil
 }
 
-// ListMessages returns messages for a given agent, most recent first, with an optional limit.
+// ListMessages returns messages to or from a given agent, most recent first, with an optional limit.
 func ListMessages(db *sql.DB, agentName string, limit int) ([]Message, error) {
 	query := `SELECT id, from_source, to_agent, content, delivered, created_at, delivered_at
-	          FROM messages WHERE to_agent = ? ORDER BY created_at DESC`
+	          FROM messages WHERE to_agent = ? OR from_source = ? ORDER BY created_at DESC`
 	var args []any
-	args = append(args, agentName)
+	args = append(args, agentName, agentName)
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
 	}
 
+	return scanMessages(db, query, args)
+}
+
+// ListAllMessages returns all messages across all agents, most recent first, with an optional limit.
+func ListAllMessages(db *sql.DB, limit int) ([]Message, error) {
+	query := `SELECT id, from_source, to_agent, content, delivered, created_at, delivered_at
+	          FROM messages ORDER BY created_at DESC`
+	var args []any
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	return scanMessages(db, query, args)
+}
+
+func scanMessages(db *sql.DB, query string, args []any) ([]Message, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("listing messages for %q: %w", agentName, err)
+		return nil, fmt.Errorf("listing messages: %w", err)
 	}
 	defer rows.Close()
 

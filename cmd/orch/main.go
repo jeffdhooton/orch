@@ -272,25 +272,36 @@ func logsCmd(log *slog.Logger) *cobra.Command {
 	var tail int
 
 	cmd := &cobra.Command{
-		Use:   "logs <name>",
-		Short: "View message history for an agent",
-		Args:  cobra.ExactArgs(1),
+		Use:   "logs [name]",
+		Short: "View message history (all agents, or filter by name)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-
 			database, err := openDB()
 			if err != nil {
 				return err
 			}
 			defer database.Close()
 
-			msgs, err := db.ListMessages(database, name, tail)
+			var msgs []db.Message
+			if len(args) == 1 {
+				msgs, err = db.ListMessages(database, args[0], tail)
+			} else {
+				limit := tail
+				if limit == 0 {
+					limit = 50
+				}
+				msgs, err = db.ListAllMessages(database, limit)
+			}
 			if err != nil {
 				return err
 			}
 
 			if len(msgs) == 0 {
-				fmt.Printf("No messages for agent %q\n", name)
+				if len(args) == 1 {
+					fmt.Printf("No messages for agent %q\n", args[0])
+				} else {
+					fmt.Println("No messages.")
+				}
 				return nil
 			}
 
@@ -314,7 +325,7 @@ func logsCmd(log *slog.Logger) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().IntVar(&tail, "tail", 0, "Limit to last N messages (0 = all)")
+	cmd.Flags().IntVar(&tail, "tail", 0, "Limit to last N messages (default 50 for all, 0=unlimited for named agent)")
 
 	return cmd
 }
