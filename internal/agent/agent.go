@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/jeffdhooton/orch/internal/db"
 	"github.com/jeffdhooton/orch/internal/tmux"
@@ -102,14 +103,22 @@ func (m *Manager) Up(opts UpOpts) error {
 		return fmt.Errorf("starting claude: %w", err)
 	}
 
-	// If a spec file is given, read it and send as first message after a short delay.
+	// Wait for claude to start up before sending the spec.
 	if opts.SpecPath != "" {
-		specContent, err := os.ReadFile(opts.SpecPath)
+		time.Sleep(3 * time.Second)
+	}
+
+	// If a spec file is given, tell claude to read it rather than pasting
+	// the contents (tmux send-keys garbles large multiline text).
+	if opts.SpecPath != "" {
+		absSpec, err := filepath.Abs(opts.SpecPath)
 		if err != nil {
-			return fmt.Errorf("reading spec file %q: %w", opts.SpecPath, err)
+			return fmt.Errorf("resolving spec path: %w", err)
 		}
-		m.Log.Info("sending spec to agent", "agent", opts.Name, "spec", opts.SpecPath)
-		if err := m.Tmux.SendKeys(SessionName, opts.Name, string(specContent)); err != nil {
+		absSpec, _ = filepath.EvalSymlinks(absSpec)
+		m.Log.Info("sending spec to agent", "agent", opts.Name, "spec", absSpec)
+		specMsg := fmt.Sprintf("Read and follow the instructions in %s", absSpec)
+		if err := m.Tmux.SendKeys(SessionName, opts.Name, specMsg); err != nil {
 			return fmt.Errorf("sending spec to agent: %w", err)
 		}
 	}

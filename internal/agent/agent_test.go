@@ -112,15 +112,15 @@ func TestUpWithSpec(t *testing.T) {
 		t.Fatalf("Up: %v", err)
 	}
 
-	// Should have sent the spec content.
+	// Should have sent a "Read and follow" message pointing to the spec file.
 	found := false
 	for _, sk := range tc.SentKeys {
-		if sk.Text == "Build the thing" {
+		if contains(sk.Text, "Read and follow") && contains(sk.Text, specFile) {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("expected spec content to be sent via SendKeys")
+		t.Error("expected 'Read and follow' spec message via SendKeys")
 	}
 }
 
