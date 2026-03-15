@@ -640,7 +640,7 @@ func statusCmd(log *slog.Logger) *cobra.Command {
 }
 
 func specgenCmd(log *slog.Logger) *cobra.Command {
-	var dir, task, output, roles string
+	var dir, task, name, output, roles string
 	var analyzeOnly bool
 
 	cmd := &cobra.Command{
@@ -688,7 +688,19 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 
 			// Set output directory with task-based subdirectory
 			if output == "" {
-				output = filepath.Join(dir, "specs", slugify(task))
+				slug := name
+				if slug == "" {
+					fmt.Fprintf(os.Stderr, "Generating spec name...\n")
+					var err error
+					slug, err = generate.GenerateSlug(cmd.Context(), task)
+					if err != nil {
+						// Fall back to simple slugify if Claude call fails
+						slug = slugify(task)
+					}
+				} else {
+					slug = slugify(slug)
+				}
+				output = filepath.Join(dir, "specs", slug)
 			}
 
 			// Generate specs
@@ -704,7 +716,8 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 
 	cmd.Flags().StringVar(&dir, "dir", "", "Target codebase directory (defaults to current directory)")
 	cmd.Flags().StringVar(&task, "task", "", "Task description for spec generation")
-	cmd.Flags().StringVar(&output, "output", "", "Output directory (default: <dir>/specs/<task-slug>/)")
+	cmd.Flags().StringVar(&name, "name", "", "Short name for this spec set (auto-generated from task if omitted)")
+	cmd.Flags().StringVar(&output, "output", "", "Output directory (default: <dir>/specs/<name>/)")
 	cmd.Flags().StringVar(&roles, "roles", "engineer,pm,reviewer", "Comma-separated roles to generate")
 	cmd.Flags().BoolVar(&analyzeOnly, "analyze", false, "Just print codebase analysis, skip generation")
 

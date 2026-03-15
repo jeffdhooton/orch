@@ -72,6 +72,34 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 	return nil
 }
 
+// GenerateSlug asks Claude to produce a short directory-name slug from a task description.
+func GenerateSlug(ctx context.Context, task string) (string, error) {
+	const systemPrompt = `You are a slug generator. Given a task description, output a short (2-5 word) kebab-case slug suitable for a directory name. Output ONLY the slug, nothing else. Examples:
+- "Implement OAuth2 authentication with refresh tokens" → "oauth2-auth"
+- "Fix the bug where users can't upload images larger than 5MB" → "fix-image-upload"
+- "Add Redis caching layer for API responses" → "redis-api-cache"`
+
+	slug, err := callClaude(ctx, systemPrompt, task)
+	if err != nil {
+		return "", fmt.Errorf("generating slug: %w", err)
+	}
+
+	// Sanitize the output to ensure it's filesystem-safe
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	slug = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			return r
+		}
+		return '-'
+	}, slug)
+	slug = strings.Trim(slug, "-")
+
+	if slug == "" {
+		return "", fmt.Errorf("claude returned empty slug")
+	}
+	return slug, nil
+}
+
 func callClaude(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	cmd := exec.CommandContext(ctx, "claude", "-p",
 		"--system-prompt", systemPrompt,
