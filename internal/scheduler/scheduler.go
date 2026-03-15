@@ -16,17 +16,30 @@ import (
 	"github.com/jeffdhooton/orch/internal/messenger"
 )
 
+// InactivityThreshold is how long an agent can be inactive before receiving a nudge.
+const InactivityThreshold = 10 * time.Minute
+
+// NudgeCooldown prevents sending nudges more often than this interval per agent.
+const NudgeCooldown = 10 * time.Minute
+
 // Scheduler polls for due schedules and agent file-based requests.
 type Scheduler struct {
 	DB          *sql.DB
 	Messenger   *messenger.Messenger
 	Log         *slog.Logger
-	lastCommits map[string]string // dir -> last known commit hash
+	lastCommits map[string]string    // dir -> last known commit hash
+	lastNudge   map[string]time.Time // agent name -> last nudge time
 }
 
 // New creates a new Scheduler.
 func New(database *sql.DB, msg *messenger.Messenger, log *slog.Logger) *Scheduler {
-	return &Scheduler{DB: database, Messenger: msg, Log: log, lastCommits: make(map[string]string)}
+	return &Scheduler{
+		DB:          database,
+		Messenger:   msg,
+		Log:         log,
+		lastCommits: make(map[string]string),
+		lastNudge:   make(map[string]time.Time),
+	}
 }
 
 // RunOnce checks for and executes any due schedules and processes agent files.
@@ -38,6 +51,7 @@ func (s *Scheduler) RunOnce() error {
 		s.Log.Error("processing agent files", "error", err)
 	}
 	s.processGitCommits()
+	s.nudgeInactiveAgents()
 	return nil
 }
 
@@ -65,6 +79,7 @@ func (s *Scheduler) Run(ctx context.Context, scheduleInterval, fileInterval time
 				s.Log.Error("processing agent files", "error", err)
 			}
 			s.processGitCommits()
+			s.nudgeInactiveAgents()
 
 			// Auto-exit when no running agents remain.
 			agents, err := db.ListAgents(s.DB, "running")
@@ -250,6 +265,38 @@ func (s *Scheduler) processGitCommits() {
 			} else {
 				s.Log.Info("notified PM of new commit", "pm", pm.Name, "commit", commitMsg)
 			}
+		}
+	}
+}
+
+// nudgeInactiveAgents sends a reminder to running agents that have been inactive
+// for longer than InactivityThreshold. Each agent is nudged at most once per NudgeCooldown.
+func (s *Scheduler) nudgeInactiveAgents() {
+	agents, err := db.ListAgents(s.DB, "running")
+	if err != nil {
+		return
+	}
+
+	now := time.Now()
+	for _, agent := range agents {
+		inactive := now.Sub(agent.LastActivity)
+		if inactive < InactivityThreshold {
+			continue
+		}
+
+		// Check cooldown — don't spam the same agent.
+		if lastTime, ok := s.lastNudge[agent.Name]; ok && now.Sub(lastTime) < NudgeCooldown {
+			continue
+		}
+
+		mins := int(inactive.Minutes())
+		msg := fmt.Sprintf("You have been inactive for %d minutes. Check on progress and take action — review your spec and schedule your next step.", mins)
+
+		if err := s.Messenger.Send("inactivity-nudge", agent.Name, msg); err != nil {
+			s.Log.Error("nudging inactive agent", "agent", agent.Name, "error", err)
+		} else {
+			s.Log.Info("nudged inactive agent", "agent", agent.Name, "inactive_minutes", mins)
+			s.lastNudge[agent.Name] = now
 		}
 	}
 }
