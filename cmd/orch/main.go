@@ -219,10 +219,14 @@ func psCmd(log *slog.Logger) *cobra.Command {
 
 			for _, a := range agents {
 				lastActivity := a.Agent.LastActivity.Format(time.DateTime)
+				status := a.EffectiveStatus
+				if status == "running" && a.Idle {
+					status = "idle"
+				}
 				fmt.Printf("%-15s %-12s %-10s %-40s %s\n",
 					a.Agent.Name,
 					a.Agent.Role,
-					a.EffectiveStatus,
+					status,
 					truncate(a.Agent.Dir, 40),
 					lastActivity,
 				)

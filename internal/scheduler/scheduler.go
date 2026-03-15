@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -17,14 +18,15 @@ import (
 
 // Scheduler polls for due schedules and agent file-based requests.
 type Scheduler struct {
-	DB        *sql.DB
-	Messenger *messenger.Messenger
-	Log       *slog.Logger
+	DB          *sql.DB
+	Messenger   *messenger.Messenger
+	Log         *slog.Logger
+	lastCommits map[string]string // dir -> last known commit hash
 }
 
 // New creates a new Scheduler.
 func New(database *sql.DB, msg *messenger.Messenger, log *slog.Logger) *Scheduler {
-	return &Scheduler{DB: database, Messenger: msg, Log: log}
+	return &Scheduler{DB: database, Messenger: msg, Log: log, lastCommits: make(map[string]string)}
 }
 
 // RunOnce checks for and executes any due schedules and processes agent files.
@@ -35,6 +37,7 @@ func (s *Scheduler) RunOnce() error {
 	if err := s.processAgentFiles(); err != nil {
 		s.Log.Error("processing agent files", "error", err)
 	}
+	s.processGitCommits()
 	return nil
 }
 
@@ -61,6 +64,7 @@ func (s *Scheduler) Run(ctx context.Context, scheduleInterval, fileInterval time
 			if err := s.processAgentFiles(); err != nil {
 				s.Log.Error("processing agent files", "error", err)
 			}
+			s.processGitCommits()
 
 			// Auto-exit when no running agents remain.
 			agents, err := db.ListAgents(s.DB, "running")
@@ -178,5 +182,74 @@ func (s *Scheduler) processSendFiles(agent db.Agent) {
 		}
 
 		os.Remove(path)
+	}
+}
+
+// processGitCommits checks each unique agent directory for new git commits.
+// When a new commit is detected, it notifies any PM-role agents in the same
+// directory so they can check progress without waiting for their next scheduled check-in.
+func (s *Scheduler) processGitCommits() {
+	agents, err := db.ListAgents(s.DB, "running")
+	if err != nil {
+		return
+	}
+
+	// Group agents by directory and find PMs.
+	type dirInfo struct {
+		pms      []db.Agent
+		builders []db.Agent
+	}
+	dirs := make(map[string]*dirInfo)
+	for _, a := range agents {
+		di, ok := dirs[a.Dir]
+		if !ok {
+			di = &dirInfo{}
+			dirs[a.Dir] = di
+		}
+		if a.Role == "pm" {
+			di.pms = append(di.pms, a)
+		} else {
+			di.builders = append(di.builders, a)
+		}
+	}
+
+	for dir, di := range dirs {
+		// Skip directories with no PMs or no builders.
+		if len(di.pms) == 0 || len(di.builders) == 0 {
+			continue
+		}
+
+		// Get latest commit hash.
+		cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
+		out, err := cmd.Output()
+		if err != nil {
+			continue // Not a git repo or no commits.
+		}
+		hash := strings.TrimSpace(string(out))
+
+		prev, seen := s.lastCommits[dir]
+		s.lastCommits[dir] = hash
+
+		if !seen {
+			continue // First time seeing this dir, just record it.
+		}
+		if hash == prev {
+			continue // No new commits.
+		}
+
+		// Get the commit message for context.
+		cmd = exec.Command("git", "-C", dir, "log", "--oneline", "-1")
+		msgOut, _ := cmd.Output()
+		commitMsg := strings.TrimSpace(string(msgOut))
+
+		// Notify all PMs in this directory.
+		for _, pm := range di.pms {
+			notification := fmt.Sprintf("New commit detected: %s — check progress and verify build.", commitMsg)
+			if err := s.Messenger.Send("git-watcher", pm.Name, notification); err != nil {
+				s.Log.Error("notifying PM of new commit", "pm", pm.Name, "error", err)
+			} else {
+				s.Log.Info("notified PM of new commit", "pm", pm.Name, "commit", commitMsg)
+			}
+		}
 	}
 }

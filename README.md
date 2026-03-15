@@ -110,6 +110,12 @@ Agents communicate through files. The scheduler watches each agent's working dir
 
 Each agent's system prompt includes instructions for these conventions, plus a list of currently running teammates.
 
+## Smart features
+
+**Idle detection** -- The dashboard and `orch ps` distinguish between agents that are actively working (green "running") and agents sitting at Claude's `❯` prompt waiting for input (yellow "idle"). No more guessing whether an agent is stuck.
+
+**Git commit watcher** -- The scheduler monitors each agent's working directory for new git commits. When a builder commits, PM-role agents in the same directory are automatically notified with the commit message. No more waiting for the next scheduled check-in to notice progress.
+
 ## Running 24/7
 
 For fully autonomous, unattended operation:

@@ -238,6 +238,12 @@ func (m *Manager) List() ([]AgentStatus, error) {
 		}
 		if a.Status == "running" && !as.Live {
 			as.EffectiveStatus = "dead"
+		} else if a.Status == "running" && as.Live {
+			as.EffectiveStatus = "running"
+			// Check if the agent is idle (waiting at prompt) or actively working.
+			if pane, err := m.Tmux.CapturePane(a.TmuxSession, a.TmuxWindow, 5); err == nil {
+				as.Idle = isIdle(pane)
+			}
 		} else {
 			as.EffectiveStatus = a.Status
 		}
@@ -251,7 +257,30 @@ func (m *Manager) List() ([]AgentStatus, error) {
 type AgentStatus struct {
 	Agent           db.Agent
 	Live            bool
+	Idle            bool
 	EffectiveStatus string
+}
+
+// isIdle checks if the tmux pane output suggests claude is sitting at its
+// prompt waiting for input. Looks for the ❯ prompt character on recent lines.
+func isIdle(paneOutput string) bool {
+	lines := strings.Split(strings.TrimRight(paneOutput, "\n"), "\n")
+	// Check the last few non-empty lines for the prompt character.
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		// Claude Code shows ❯ when waiting for input.
+		if strings.Contains(line, "❯") {
+			return true
+		}
+		// If we hit a line with actual content (not prompt-related), it's working.
+		if len(line) > 0 && !strings.Contains(line, "bypass permissions") && !strings.Contains(line, "shift+tab") {
+			return false
+		}
+	}
+	return false
 }
 
 // trustDirectory adds a directory to ~/.claude.json as trusted so claude
