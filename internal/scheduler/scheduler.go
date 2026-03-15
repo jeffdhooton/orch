@@ -122,10 +122,28 @@ func (s *Scheduler) processAgentFiles() error {
 	}
 
 	for _, agent := range agents {
+		s.processDoneFile(agent)
 		s.processScheduleFile(agent)
 		s.processSendFiles(agent)
 	}
 	return nil
+}
+
+func (s *Scheduler) processDoneFile(agent db.Agent) {
+	path := filepath.Join(agent.Dir, ".orch-done")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return // File doesn't exist, that's normal.
+	}
+
+	summary := strings.TrimSpace(string(content))
+	s.Log.Info("agent marked itself done", "agent", agent.Name, "summary", summary)
+
+	if err := db.UpdateAgentStatus(s.DB, agent.Name, "done"); err != nil {
+		s.Log.Error("updating agent status to done", "agent", agent.Name, "error", err)
+	}
+
+	os.Remove(path)
 }
 
 func (s *Scheduler) processScheduleFile(agent db.Agent) {

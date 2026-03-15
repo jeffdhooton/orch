@@ -221,7 +221,9 @@ func (m model) View() string {
 			name := a.Agent.Name
 			role := a.Agent.Role
 			status := a.EffectiveStatus
-			if status == "running" && a.Idle {
+			if status == "running" && a.NeedsInput {
+				status = "needs_input"
+			} else if status == "running" && a.Idle {
 				status = "idle"
 			}
 			dir := truncatePath(a.Agent.Dir, 35)
@@ -333,8 +335,17 @@ func (m model) fetchData() tea.Cmd {
 
 // --- helpers ---
 
-var idleStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("214")) // amber/yellow
+var (
+	idleStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("214")) // amber/yellow
+
+	doneStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("75")) // blue
+
+	needsInputStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("201")) // bright magenta
+)
 
 func statusText(status string) string {
 	switch status {
@@ -342,6 +353,10 @@ func statusText(status string) string {
 		return runningStyle.Render("running")
 	case "idle":
 		return idleStyle.Render("idle")
+	case "done":
+		return doneStyle.Render("done")
+	case "needs_input":
+		return needsInputStyle.Render("needs input")
 	case "stopped":
 		return stoppedStyle.Render("stopped")
 	case "dead":

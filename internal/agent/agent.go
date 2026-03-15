@@ -236,13 +236,16 @@ func (m *Manager) List() ([]AgentStatus, error) {
 			Agent: a,
 			Live:  liveWindows[a.TmuxWindow],
 		}
-		if a.Status == "running" && !as.Live {
+		if a.Status == "done" {
+			as.EffectiveStatus = "done"
+		} else if a.Status == "running" && !as.Live {
 			as.EffectiveStatus = "dead"
 		} else if a.Status == "running" && as.Live {
 			as.EffectiveStatus = "running"
-			// Check if the agent is idle (waiting at prompt) or actively working.
+			// Check tmux pane for detailed status.
 			if pane, err := m.Tmux.CapturePane(a.TmuxSession, a.TmuxWindow, 5); err == nil {
 				as.Idle = isIdle(pane)
+				as.NeedsInput = needsInput(pane)
 			}
 		} else {
 			as.EffectiveStatus = a.Status
@@ -258,6 +261,7 @@ type AgentStatus struct {
 	Agent           db.Agent
 	Live            bool
 	Idle            bool
+	NeedsInput      bool
 	EffectiveStatus string
 }
 
@@ -278,6 +282,27 @@ func isIdle(paneOutput string) bool {
 		// If we hit a line with actual content (not prompt-related), it's working.
 		if len(line) > 0 && !strings.Contains(line, "bypass permissions") && !strings.Contains(line, "shift+tab") {
 			return false
+		}
+	}
+	return false
+}
+
+// needsInput checks if the tmux pane output suggests claude is waiting for
+// user action, such as a permission prompt or a question.
+func needsInput(paneOutput string) bool {
+	lines := strings.Split(strings.TrimRight(paneOutput, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0 && i >= len(lines)-5; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		// Claude Code permission prompts.
+		if strings.Contains(line, "bypass permissions") ||
+			strings.Contains(line, "approve") ||
+			strings.Contains(line, "Press up to edit queued messages") ||
+			strings.Contains(line, "Allow") ||
+			strings.Contains(line, "Deny") {
+			return true
 		}
 	}
 	return false
@@ -359,5 +384,7 @@ To schedule a follow-up task for yourself, create a file named .orch-schedule wi
 <minutes> <note describing what to do>
 
 The orchestrator will send you the note as a message after the specified number of minutes.
+
+When you have fully completed your mission, create a file named .orch-done with a brief summary of what you accomplished. This signals to the orchestrator that you are finished.
 
 Stay focused on your assigned role.`
