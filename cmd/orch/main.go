@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -685,9 +686,9 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 			// Parse roles
 			roleList := parseRoles(roles)
 
-			// Set output directory
+			// Set output directory with task-based subdirectory
 			if output == "" {
-				output = dir + "/specs"
+				output = filepath.Join(dir, "specs", slugify(task))
 			}
 
 			// Generate specs
@@ -703,11 +704,26 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 
 	cmd.Flags().StringVar(&dir, "dir", "", "Target codebase directory (defaults to current directory)")
 	cmd.Flags().StringVar(&task, "task", "", "Task description for spec generation")
-	cmd.Flags().StringVar(&output, "output", "", "Output directory (default: <dir>/specs/)")
+	cmd.Flags().StringVar(&output, "output", "", "Output directory (default: <dir>/specs/<task-slug>/)")
 	cmd.Flags().StringVar(&roles, "roles", "engineer,pm,reviewer", "Comma-separated roles to generate")
 	cmd.Flags().BoolVar(&analyzeOnly, "analyze", false, "Just print codebase analysis, skip generation")
 
 	return cmd
+}
+
+// slugify converts a task description into a filesystem-safe directory name.
+func slugify(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 60 {
+		s = s[:60]
+		s = strings.TrimRight(s, "-")
+	}
+	if s == "" {
+		s = "default"
+	}
+	return s
 }
 
 func parseRoles(s string) []string {
