@@ -1,4 +1,18 @@
-# orch
+```
+ ██████╗ ██████╗  ██████╗██╗  ██╗
+██╔═══██╗██╔══██╗██╔════╝██║  ██║
+██║   ██║██████╔╝██║     ███████║
+██║   ██║██╔══██╗██║     ██╔══██║
+╚██████╔╝██║  ██║╚██████╗██║  ██║
+ ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
+
+      orchestrate your claudes.
+```
+
+[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/jeffdhooton/orch)](https://goreportcard.com/report/github.com/jeffdhooton/orch)
+[![Go Reference](https://pkg.go.dev/badge/github.com/jeffdhooton/orch.svg)](https://pkg.go.dev/github.com/jeffdhooton/orch)
 
 A CLI orchestrator for coordinating multiple Claude Code instances via tmux.
 
