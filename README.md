@@ -50,6 +50,8 @@ orch dash
 | `orch send <name> <msg>` | Send a message to an agent |
 | `orch logs <name>` | View message history |
 | `orch schedule <name> <min> <note>` | Schedule a future message |
+| `orch attach <name>` | Attach to an agent's tmux window (Ctrl-B d to detach) |
+| `orch status` | Quick pulse check (agent count, scheduler, last activity) |
 | `orch dash` | Live terminal dashboard |
 | `orch scheduler` | Run the scheduler as a foreground process |
 | `orch watch` | Auto-restart dead agents |

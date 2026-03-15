@@ -43,6 +43,8 @@ func main() {
 		resetCmd(log),
 		schedulerCmd(log),
 		watchCmd(log),
+		attachCmd(log),
+		statusCmd(log),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -507,6 +509,115 @@ func watchCmd(log *slog.Logger) *cobra.Command {
 
 	cmd.Flags().IntVar(&interval, "interval", 30, "Check interval in seconds")
 	return cmd
+}
+
+func attachCmd(log *slog.Logger) *cobra.Command {
+	return &cobra.Command{
+		Use:   "attach <name>",
+		Short: "Attach to an agent's tmux window",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+
+			database, err := openDB()
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			tc := tmux.New()
+			a, err := db.GetAgent(database, name)
+			if err != nil {
+				return err
+			}
+
+			// Select the agent's window, then attach.
+			_ = tc.SelectWindow(a.TmuxSession, a.TmuxWindow)
+			return tc.AttachSession(a.TmuxSession)
+		},
+	}
+}
+
+func statusCmd(log *slog.Logger) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Quick pulse check on orch",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			database, err := openDB()
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			tc := tmux.New()
+			mgr := agent.New(database, tc, log)
+
+			agents, err := mgr.List()
+			if err != nil {
+				return err
+			}
+
+			// Count by status.
+			running, dead := 0, 0
+			var lastActivity time.Time
+			for _, a := range agents {
+				switch a.EffectiveStatus {
+				case "running":
+					running++
+				case "dead":
+					dead++
+				}
+				if a.Agent.LastActivity.After(lastActivity) {
+					lastActivity = a.Agent.LastActivity
+				}
+			}
+
+			// Scheduler status.
+			schedulerRunning := false
+			orchDir, _ := db.DefaultDir()
+			if orchDir != "" {
+				pidFile := filepath.Join(orchDir, "scheduler.pid")
+				if data, err := os.ReadFile(pidFile); err == nil {
+					if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+						if proc, err := os.FindProcess(pid); err == nil {
+							if proc.Signal(syscall.Signal(0)) == nil {
+								schedulerRunning = true
+							}
+						}
+					}
+				}
+			}
+
+			if len(agents) == 0 {
+				fmt.Println("No agents. Use `orch up` to start one.")
+				return nil
+			}
+
+			// Print summary.
+			fmt.Printf("%d agent(s) running", running)
+			if dead > 0 {
+				fmt.Printf(", %d dead", dead)
+			}
+			fmt.Println()
+
+			if schedulerRunning {
+				fmt.Println("Scheduler: running")
+			} else {
+				fmt.Println("Scheduler: stopped")
+			}
+
+			if !lastActivity.IsZero() {
+				ago := time.Since(lastActivity)
+				if ago < time.Minute {
+					fmt.Println("Last activity: just now")
+				} else {
+					fmt.Printf("Last activity: %dm ago\n", int(ago.Minutes()))
+				}
+			}
+
+			return nil
+		},
+	}
 }
 
 // ensureScheduler starts the scheduler as a background process if one isn't
