@@ -296,12 +296,16 @@ func needsInput(paneOutput string) bool {
 		if line == "" {
 			continue
 		}
-		// Claude Code permission prompts.
-		if strings.Contains(line, "bypass permissions") ||
-			strings.Contains(line, "approve") ||
-			strings.Contains(line, "Press up to edit queued messages") ||
-			strings.Contains(line, "Allow") ||
-			strings.Contains(line, "Deny") {
+		// Skip the status bar — "bypass permissions on" is always present
+		// when running with --dangerously-skip-permissions and is NOT a prompt.
+		if strings.HasPrefix(line, "▸▸") || strings.HasPrefix(line, ">>") {
+			continue
+		}
+		// Actual interactive permission prompts asking the user to decide.
+		if strings.Contains(line, "Press up to edit queued messages") ||
+			strings.Contains(line, "Allow once") ||
+			strings.Contains(line, "Allow always") ||
+			strings.Contains(line, "Do you want to") {
 			return true
 		}
 	}
