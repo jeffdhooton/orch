@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -61,6 +62,16 @@ func (m *Manager) Up(opts UpOpts) error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%q is not a directory", absDir)
+	}
+
+	// Ensure the working directory is a git repo (needed for claude trust + commits).
+	gitDir := filepath.Join(absDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		m.Log.Info("initializing git repo", "dir", absDir)
+		gitInit := exec.Command("git", "init", absDir)
+		if out, gitErr := gitInit.CombinedOutput(); gitErr != nil {
+			m.Log.Warn("failed to git init", "error", gitErr, "output", string(out))
+		}
 	}
 
 	// Ensure the orch tmux session exists.

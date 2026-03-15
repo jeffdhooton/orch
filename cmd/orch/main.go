@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -77,7 +79,7 @@ func initCmd(log *slog.Logger) *cobra.Command {
 
 func upCmd(log *slog.Logger) *cobra.Command {
 	var role, dir, specPath string
-	var skipPermissions bool
+	var skipPermissions, noScheduler bool
 
 	cmd := &cobra.Command{
 		Use:   "up <name>",
@@ -114,6 +116,12 @@ func upCmd(log *slog.Logger) *cobra.Command {
 			}
 
 			fmt.Printf("Agent %q started (role: %s, dir: %s)\n", name, role, dir)
+
+			// Auto-start the scheduler if not already running.
+			if !noScheduler {
+				ensureScheduler(log)
+			}
+
 			return nil
 		},
 	}
@@ -122,6 +130,7 @@ func upCmd(log *slog.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", "", "Working directory (defaults to current directory)")
 	cmd.Flags().StringVar(&specPath, "spec", "", "Path to a spec file to send as the first message")
 	cmd.Flags().BoolVar(&skipPermissions, "skip-permissions", true, "Pass --dangerously-skip-permissions to claude (default: true for autonomous agents)")
+	cmd.Flags().BoolVar(&noScheduler, "no-scheduler", false, "Don't auto-start the background scheduler")
 
 	return cmd
 }
@@ -329,6 +338,9 @@ func resetCmd(log *slog.Logger) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			tc := tmux.New()
 
+			// Kill the background scheduler if running.
+			stopScheduler()
+
 			// Kill the orch tmux session if it exists.
 			if tc.HasSession(agent.SessionName) {
 				fmt.Println("Killing orch tmux session...")
@@ -369,6 +381,26 @@ func schedulerCmd(log *slog.Logger) *cobra.Command {
 		Use:   "scheduler",
 		Short: "Run the scheduler as a foreground process (delivers scheduled messages and processes agent files)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// When running as a background daemon, redirect logs to file.
+			orchDir, _ := db.DefaultDir()
+			if orchDir != "" {
+				logFile := filepath.Join(orchDir, "scheduler.log")
+				f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+				if err == nil {
+					log = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo}))
+					// Also redirect stdout/stderr so nothing leaks to terminal.
+					os.Stdout = f
+					os.Stderr = f
+				}
+			}
+
+			// Write PID file so reset can find us.
+			if orchDir != "" {
+				pidFile := filepath.Join(orchDir, "scheduler.pid")
+				os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o644)
+				defer os.Remove(pidFile)
+			}
+
 			database, err := openDB()
 			if err != nil {
 				return err
@@ -382,11 +414,9 @@ func schedulerCmd(log *slog.Logger) *cobra.Command {
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer cancel()
 
-			fmt.Println("Scheduler running. Ctrl-C to stop.")
-			fmt.Println("  Schedule poll: every 30s")
-			fmt.Println("  File poll:     every 10s")
+			log.Info("scheduler started", "schedule_poll", "30s", "file_poll", "10s")
 			sched.Run(ctx, 30*time.Second, 10*time.Second)
-			fmt.Println("Scheduler stopped.")
+			log.Info("scheduler stopped")
 			return nil
 		},
 	}
@@ -452,6 +482,82 @@ func watchCmd(log *slog.Logger) *cobra.Command {
 
 	cmd.Flags().IntVar(&interval, "interval", 30, "Check interval in seconds")
 	return cmd
+}
+
+// ensureScheduler starts the scheduler as a background process if one isn't
+// already running. Uses a PID file at ~/.orch/scheduler.pid to track it.
+func ensureScheduler(log *slog.Logger) {
+	orchDir, err := db.DefaultDir()
+	if err != nil {
+		return
+	}
+	pidFile := filepath.Join(orchDir, "scheduler.pid")
+
+	// Check if a scheduler is already running.
+	if data, err := os.ReadFile(pidFile); err == nil {
+		pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err == nil {
+			// Check if process is still alive.
+			proc, err := os.FindProcess(pid)
+			if err == nil {
+				// Signal 0 checks if process exists without killing it.
+				if proc.Signal(syscall.Signal(0)) == nil {
+					return // Scheduler already running.
+				}
+			}
+		}
+	}
+
+	// Find our own binary path to spawn the scheduler.
+	self, err := os.Executable()
+	if err != nil {
+		log.Warn("could not find orch executable for scheduler", "error", err)
+		return
+	}
+
+	// Start scheduler as a detached background process.
+	logFile := filepath.Join(orchDir, "scheduler.log")
+	outFile, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		log.Warn("could not open scheduler log", "error", err)
+		return
+	}
+
+	cmd := exec.Command(self, "scheduler")
+	cmd.Stdout = outFile
+	cmd.Stderr = outFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // Detach from parent.
+	if err := cmd.Start(); err != nil {
+		outFile.Close()
+		log.Warn("could not start scheduler", "error", err)
+		return
+	}
+	outFile.Close()
+
+	// Write PID file.
+	os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
+	fmt.Printf("Scheduler started (pid %d, log: %s)\n", cmd.Process.Pid, logFile)
+}
+
+// stopScheduler kills all background scheduler processes.
+func stopScheduler() {
+	orchDir, _ := db.DefaultDir()
+
+	// Try PID file first.
+	if orchDir != "" {
+		pidFile := filepath.Join(orchDir, "scheduler.pid")
+		if data, err := os.ReadFile(pidFile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				if proc, err := os.FindProcess(pid); err == nil {
+					proc.Signal(syscall.SIGTERM)
+				}
+			}
+		}
+		os.Remove(pidFile)
+	}
+
+	// Also pkill any stragglers — the PID file alone isn't reliable.
+	exec.Command("pkill", "-f", "orch scheduler").Run()
 }
 
 func truncate(s string, maxLen int) string {

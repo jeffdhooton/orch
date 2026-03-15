@@ -120,22 +120,14 @@ orch up builder --role engineer --dir ~/project --spec specs/task.md
 orch up reviewer --role reviewer --dir ~/project
 ```
 
-### 2. Run the scheduler and watcher
+### 2. The scheduler starts automatically
 
-In separate terminals (or use tmux):
+The first `orch up` auto-starts a background scheduler process that handles inter-agent messages and scheduled check-ins. Logs go to `~/.orch/scheduler.log`. Disable with `--no-scheduler`.
+
+For auto-restarting dead agents, run the watcher:
 
 ```bash
-# Process scheduled messages and inter-agent files
-orch scheduler &
-
-# Auto-restart dead agents
 orch watch &
-```
-
-Or run them together:
-
-```bash
-orch scheduler & orch watch & wait
 ```
 
 ### 3. Monitor with the dashboard
@@ -159,6 +151,20 @@ The agents run inside a tmux session called `orch`. As long as tmux survives (i.
 - **Schedule check-ins.** Agents can schedule their own follow-ups: "in 30 minutes, check if the tests pass."
 - **One task per agent.** Focused agents with narrow roles produce better results than one agent doing everything.
 - **Commit often.** Include commit discipline in your spec files (e.g., "commit every 30 minutes with descriptive messages").
+
+## Example: 3-agent team
+
+The `examples/specs/` directory contains ready-to-use spec files for a PM/engineer/reviewer team building a Go REST API:
+
+```bash
+mkdir -p ~/myproject
+orch up builder --role engineer --dir ~/myproject --spec examples/specs/engineer.md
+orch up pm --role pm --dir ~/myproject --spec examples/specs/pm.md
+orch up reviewer --role reviewer --dir ~/myproject --spec examples/specs/reviewer.md
+orch dash
+```
+
+The engineer builds the code, the PM checks in every 10 minutes and coordinates, and the reviewer does code review when notified. See the spec files for the full details.
 
 ## Architecture
 

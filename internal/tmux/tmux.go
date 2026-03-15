@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Runner is the interface for tmux operations. Use this in other packages
@@ -68,13 +69,60 @@ func (c *Client) KillWindow(session, name string) error {
 }
 
 // SendKeys sends text to a tmux window, followed by Enter.
+// For multiline text, it uses tmux load-buffer/paste-buffer to avoid
+// garbled input, then sends Enter separately after a short delay.
 func (c *Client) SendKeys(session, window, text string) error {
 	target := session + ":" + window
+
+	if strings.Contains(text, "\n") {
+		return c.sendMultiline(target, text)
+	}
+
 	cmd := exec.Command("tmux", "send-keys", "-t", target, text, "Enter")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("sending keys to %q: %s: %w", target, strings.TrimSpace(string(out)), err)
 	}
+	return nil
+}
+
+// sendMultiline handles multiline text by writing to a temp file,
+// loading it into a tmux buffer, pasting it, then pressing Enter.
+func (c *Client) sendMultiline(target, text string) error {
+	// Write text to a temp file for tmux load-buffer.
+	tmpFile, err := os.CreateTemp("", "orch-msg-*.txt")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if _, err := tmpFile.WriteString(text); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("writing temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Load into tmux buffer.
+	cmd := exec.Command("tmux", "load-buffer", tmpFile.Name())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("loading tmux buffer: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+
+	// Paste the buffer into the target pane.
+	cmd = exec.Command("tmux", "paste-buffer", "-t", target)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("pasting tmux buffer: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+
+	// Brief pause to let Claude Code process the paste.
+	time.Sleep(500 * time.Millisecond)
+
+	// Send Enter to submit.
+	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("sending Enter to %q: %s: %w", target, strings.TrimSpace(string(out)), err)
+	}
+
 	return nil
 }
 
