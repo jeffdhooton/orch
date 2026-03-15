@@ -48,6 +48,7 @@ func (s *Scheduler) Run(ctx context.Context, scheduleInterval, fileInterval time
 	// Run once immediately.
 	s.RunOnce()
 
+	idleTicks := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -59,6 +60,18 @@ func (s *Scheduler) Run(ctx context.Context, scheduleInterval, fileInterval time
 		case <-fileTicker.C:
 			if err := s.processAgentFiles(); err != nil {
 				s.Log.Error("processing agent files", "error", err)
+			}
+
+			// Auto-exit when no running agents remain.
+			agents, err := db.ListAgents(s.DB, "running")
+			if err == nil && len(agents) == 0 {
+				idleTicks++
+				if idleTicks >= 3 { // ~30s of no agents before exiting
+					s.Log.Info("no running agents, scheduler exiting")
+					return
+				}
+			} else {
+				idleTicks = 0
 			}
 		}
 	}

@@ -45,7 +45,7 @@ orch dash
 |---------|-------------|
 | `orch init` | Initialize `~/.orch/` and the database |
 | `orch up <name>` | Spin up a named agent |
-| `orch down <name>` | Tear down an agent |
+| `orch down <name>` | Tear down an agent (`--all` for all agents) |
 | `orch ps` | List all agents with live status |
 | `orch send <name> <msg>` | Send a message to an agent |
 | `orch logs <name>` | View message history |
@@ -143,6 +143,16 @@ The agents run inside a tmux session called `orch`. As long as tmux survives (i.
 - Run on a server or always-on machine
 - Use `tmux` to keep the session alive across SSH disconnects
 - Run `orch scheduler` and `orch watch` under a process manager (systemd, launchd, etc.)
+
+### 5. Stopping
+
+When the project is done:
+
+```bash
+orch down --all
+```
+
+This tears down all agents and the background scheduler auto-exits ~30 seconds later. Message history is preserved in the database — use `orch logs <name>` to review. Use `orch reset` only when you want a completely clean slate.
 
 ### Tips for autonomous operation
 

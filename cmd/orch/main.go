@@ -136,12 +136,16 @@ func upCmd(log *slog.Logger) *cobra.Command {
 }
 
 func downCmd(log *slog.Logger) *cobra.Command {
-	return &cobra.Command{
-		Use:   "down <name>",
-		Short: "Tear down an agent",
-		Args:  cobra.ExactArgs(1),
+	var all bool
+
+	cmd := &cobra.Command{
+		Use:   "down [name]",
+		Short: "Tear down an agent (or all agents with --all)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
+			if !all && len(args) == 0 {
+				return fmt.Errorf("specify an agent name or use --all")
+			}
 
 			database, err := openDB()
 			if err != nil {
@@ -152,14 +156,35 @@ func downCmd(log *slog.Logger) *cobra.Command {
 			tc := tmux.New()
 			mgr := agent.New(database, tc, log)
 
-			if err := mgr.Down(name); err != nil {
-				return err
+			if all {
+				agents, err := mgr.List()
+				if err != nil {
+					return err
+				}
+				if len(agents) == 0 {
+					fmt.Println("No agents running.")
+					return nil
+				}
+				for _, a := range agents {
+					if err := mgr.Down(a.Agent.Name); err != nil {
+						log.Warn("failed to stop agent", "name", a.Agent.Name, "error", err)
+					} else {
+						fmt.Printf("Agent %q stopped\n", a.Agent.Name)
+					}
+				}
+				return nil
 			}
 
-			fmt.Printf("Agent %q stopped\n", name)
+			if err := mgr.Down(args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("Agent %q stopped\n", args[0])
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&all, "all", false, "Tear down all agents")
+	return cmd
 }
 
 func psCmd(log *slog.Logger) *cobra.Command {
