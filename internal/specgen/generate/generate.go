@@ -141,11 +141,12 @@ func (g *Generator) callClaude(ctx context.Context, systemPrompt, userPrompt str
 	}
 	g.logf("calling claude CLI: claude %s", strings.Join(logArgs, " "))
 
+	// Pass stderr through so the user sees any warnings, errors, or prompts
+	// from claude in real time instead of silently swallowing them.
+	cmd.Stderr = os.Stderr
+
 	output, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("%w: %s", err, string(exitErr.Stderr))
-		}
 		return "", err
 	}
 
