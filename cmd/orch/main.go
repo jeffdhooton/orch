@@ -641,7 +641,7 @@ func statusCmd(log *slog.Logger) *cobra.Command {
 
 func specgenCmd(log *slog.Logger) *cobra.Command {
 	var dir, task, name, output, roles string
-	var analyzeOnly bool
+	var analyzeOnly, verbose bool
 
 	cmd := &cobra.Command{
 		Use:   "specgen",
@@ -692,7 +692,7 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 				if slug == "" {
 					fmt.Fprintf(os.Stderr, "Generating spec name...\n")
 					var err error
-					slug, err = generate.GenerateSlug(cmd.Context(), task)
+					slug, err = generate.GenerateSlug(cmd.Context(), task, verbose)
 					if err != nil {
 						// Fall back to simple slugify if Claude call fails
 						slug = slugify(task)
@@ -705,6 +705,7 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 
 			// Generate specs
 			gen := generate.New()
+			gen.Verbose = verbose
 			return gen.Generate(cmd.Context(), generate.GenerateOpts{
 				Analysis:  result,
 				Task:      task,
@@ -720,6 +721,7 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&output, "output", "", "Output directory (default: <dir>/specs/<name>/)")
 	cmd.Flags().StringVar(&roles, "roles", "engineer,pm,reviewer", "Comma-separated roles to generate")
 	cmd.Flags().BoolVar(&analyzeOnly, "analyze", false, "Just print codebase analysis, skip generation")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed progress and timing for each step")
 
 	return cmd
 }

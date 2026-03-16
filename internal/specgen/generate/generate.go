@@ -7,13 +7,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jeffdhooton/orch/internal/specgen/analyze"
 	"github.com/jeffdhooton/orch/internal/specgen/prompt"
 )
 
 // Generator produces spec files by invoking the Claude CLI.
-type Generator struct{}
+type Generator struct {
+	Verbose bool
+}
 
 // GenerateOpts configures spec generation.
 type GenerateOpts struct {
@@ -28,14 +31,23 @@ func New() *Generator {
 	return &Generator{}
 }
 
+func (g *Generator) logf(format string, args ...any) {
+	if g.Verbose {
+		fmt.Fprintf(os.Stderr, "[verbose] "+format+"\n", args...)
+	}
+}
+
 // Generate produces spec files for each requested role.
 func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 	// Check that claude CLI is available
-	if _, err := exec.LookPath("claude"); err != nil {
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
 		return fmt.Errorf("claude CLI not found in PATH — install Claude Code: https://docs.anthropic.com/en/docs/claude-code")
 	}
+	g.logf("claude CLI found at %s", claudePath)
 
 	// Create output directory
+	g.logf("creating output directory: %s", opts.OutputDir)
 	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
@@ -55,11 +67,21 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 		fmt.Fprintf(os.Stderr, "Generating %s spec...", role)
 
 		userPrompt := prompt.BuildUserPrompt(opts.Analysis, opts.Task, role)
+		g.logf("system prompt length: %d chars", len(sp))
+		g.logf("user prompt length: %d chars", len(userPrompt))
+		g.logf("calling claude CLI: claude -p --system-prompt <...> --output-format text")
+
+		start := time.Now()
 		output, err := callClaude(ctx, sp, userPrompt)
+		elapsed := time.Since(start)
+
 		if err != nil {
 			fmt.Fprintf(os.Stderr, " failed\n")
+			g.logf("claude call failed after %s: %v", elapsed, err)
 			return fmt.Errorf("generating %s spec: %w", role, err)
 		}
+
+		g.logf("claude responded in %s (%d chars)", elapsed, len(output))
 
 		outPath := filepath.Join(opts.OutputDir, role+".md")
 		if err := os.WriteFile(outPath, []byte(output), 0o644); err != nil {
@@ -73,15 +95,27 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 }
 
 // GenerateSlug asks Claude to produce a short directory-name slug from a task description.
-func GenerateSlug(ctx context.Context, task string) (string, error) {
+// If verbose is true, progress is logged to stderr.
+func GenerateSlug(ctx context.Context, task string, verbose bool) (string, error) {
 	const systemPrompt = `You are a slug generator. Given a task description, output a short (2-5 word) kebab-case slug suitable for a directory name. Output ONLY the slug, nothing else. Examples:
 - "Implement OAuth2 authentication with refresh tokens" → "oauth2-auth"
 - "Fix the bug where users can't upload images larger than 5MB" → "fix-image-upload"
 - "Add Redis caching layer for API responses" → "redis-api-cache"`
 
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[verbose] calling claude CLI for slug generation...\n")
+	}
+	start := time.Now()
 	slug, err := callClaude(ctx, systemPrompt, task)
+	elapsed := time.Since(start)
 	if err != nil {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "[verbose] slug generation failed after %s: %v\n", elapsed, err)
+		}
 		return "", fmt.Errorf("generating slug: %w", err)
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[verbose] slug generated in %s: %q\n", elapsed, slug)
 	}
 
 	// Sanitize the output to ensure it's filesystem-safe
