@@ -690,16 +690,9 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 			if output == "" {
 				slug := name
 				if slug == "" {
-					fmt.Fprintf(os.Stderr, "Generating spec name...\n")
-					var err error
-					slug, err = generate.GenerateSlug(cmd.Context(), task, verbose)
-					if err != nil {
-						// Fall back to simple slugify if Claude call fails
-						slug = slugify(task)
-					}
-				} else {
-					slug = slugify(slug)
+					slug = task
 				}
+				slug = slugify(slug)
 				output = filepath.Join(dir, "specs", slug)
 			}
 
@@ -731,8 +724,8 @@ func slugify(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
-	if len(s) > 60 {
-		s = s[:60]
+	if len(s) > 50 {
+		s = s[:50]
 		s = strings.TrimRight(s, "-")
 	}
 	if s == "" {
