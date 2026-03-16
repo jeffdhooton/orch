@@ -97,6 +97,7 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 func callClaude(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	cmd := exec.CommandContext(ctx, "claude", "-p",
 		"--dangerously-skip-permissions",
+		"--strict-mcp-config",
 		"--system-prompt", systemPrompt,
 		"--output-format", "text",
 	)
