@@ -69,7 +69,7 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 		userPrompt := prompt.BuildUserPrompt(opts.Analysis, opts.Task, role)
 		g.logf("system prompt length: %d chars", len(sp))
 		g.logf("user prompt length: %d chars", len(userPrompt))
-		g.logf("calling claude CLI: claude -p --system-prompt <...> --output-format text")
+		g.logf("calling claude CLI: claude -p --dangerously-skip-permissions --system-prompt <...> --output-format text")
 
 		start := time.Now()
 		output, err := callClaude(ctx, sp, userPrompt)
