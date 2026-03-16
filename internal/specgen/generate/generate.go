@@ -69,10 +69,10 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 		userPrompt := prompt.BuildUserPrompt(opts.Analysis, opts.Task, role)
 		g.logf("system prompt length: %d chars", len(sp))
 		g.logf("user prompt length: %d chars", len(userPrompt))
-		g.logf("calling claude CLI: claude -p --dangerously-skip-permissions --system-prompt <...> --output-format text")
+		// Log line is generated dynamically from callClaude — removed static string
 
 		start := time.Now()
-		output, err := callClaude(ctx, sp, userPrompt)
+		output, err := g.callClaude(ctx, sp, userPrompt)
 		elapsed := time.Since(start)
 
 		if err != nil {
@@ -94,14 +94,26 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 	return nil
 }
 
-func callClaude(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
-	cmd := exec.CommandContext(ctx, "claude", "-p",
+func (g *Generator) callClaude(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	args := []string{
+		"-p",
 		"--dangerously-skip-permissions",
 		"--strict-mcp-config",
 		"--system-prompt", systemPrompt,
 		"--output-format", "text",
-	)
+	}
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Stdin = strings.NewReader(userPrompt)
+
+	// Log the actual command (mask the system prompt since it's huge)
+	logArgs := make([]string, len(args))
+	copy(logArgs, args)
+	for i, a := range logArgs {
+		if a == "--system-prompt" && i+1 < len(logArgs) {
+			logArgs[i+1] = "<...>"
+		}
+	}
+	g.logf("calling claude CLI: claude %s", strings.Join(logArgs, " "))
 
 	output, err := cmd.Output()
 	if err != nil {
