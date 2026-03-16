@@ -49,6 +49,7 @@ func main() {
 		attachCmd(log),
 		statusCmd(log),
 		specgenCmd(log),
+		schedulerRestartCmd(log),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -366,6 +367,10 @@ func dashCmd(log *slog.Logger) *cobra.Command {
 		Use:   "dash",
 		Short: "Live terminal dashboard of all agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Kill any stale background scheduler so the dashboard's
+			// internal scheduler is the only one running.
+			stopScheduler()
+
 			database, err := openDB()
 			if err != nil {
 				return err
@@ -862,6 +867,19 @@ func ensureScheduler(log *slog.Logger) {
 	// Write PID file.
 	os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
 	fmt.Printf("Scheduler started (pid %d, log: %s)\n", cmd.Process.Pid, logFile)
+}
+
+func schedulerRestartCmd(log *slog.Logger) *cobra.Command {
+	return &cobra.Command{
+		Use:   "scheduler-restart",
+		Short: "Kill and restart the background scheduler",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			stopScheduler()
+			fmt.Println("Stopped old scheduler.")
+			ensureScheduler(log)
+			return nil
+		},
+	}
 }
 
 // stopScheduler kills all background scheduler processes.
