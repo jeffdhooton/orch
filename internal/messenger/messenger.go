@@ -27,7 +27,12 @@ func (m *Messenger) Send(from, agentName, content string) error {
 		return fmt.Errorf("looking up agent: %w", err)
 	}
 
-	if agent.Status != "running" {
+	// Reactivate done agents — a new message means there's more work to do.
+	if agent.Status == "done" {
+		if err := db.UpdateAgentStatus(m.DB, agentName, "running"); err != nil {
+			return fmt.Errorf("reactivating agent %q: %w", agentName, err)
+		}
+	} else if agent.Status != "running" {
 		return fmt.Errorf("agent %q is not running (status: %s)", agentName, agent.Status)
 	}
 
