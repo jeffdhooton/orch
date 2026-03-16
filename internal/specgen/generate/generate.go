@@ -16,6 +16,7 @@ import (
 // Generator produces spec files by invoking the Claude CLI.
 type Generator struct {
 	Verbose bool
+	Model   string // e.g. "sonnet", "haiku", "opus"
 }
 
 // GenerateOpts configures spec generation.
@@ -127,6 +128,9 @@ func (g *Generator) callClaude(ctx context.Context, systemPrompt, userPrompt str
 		"--strict-mcp-config",
 		"--system-prompt", systemPrompt,
 		"--output-format", "text",
+	}
+	if g.Model != "" {
+		args = append(args, "--model", g.Model)
 	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Stdin = strings.NewReader(userPrompt)

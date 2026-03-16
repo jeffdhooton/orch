@@ -640,7 +640,7 @@ func statusCmd(log *slog.Logger) *cobra.Command {
 }
 
 func specgenCmd(log *slog.Logger) *cobra.Command {
-	var dir, task, name, output, roles string
+	var dir, task, name, output, roles, model string
 	var analyzeOnly, verbose bool
 
 	cmd := &cobra.Command{
@@ -699,6 +699,7 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 			// Generate specs
 			gen := generate.New()
 			gen.Verbose = verbose
+			gen.Model = model
 			return gen.Generate(cmd.Context(), generate.GenerateOpts{
 				Analysis:  result,
 				Task:      task,
@@ -715,6 +716,7 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&roles, "roles", "engineer,pm,reviewer", "Comma-separated roles to generate")
 	cmd.Flags().BoolVar(&analyzeOnly, "analyze", false, "Just print codebase analysis, skip generation")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed progress and timing for each step")
+	cmd.Flags().StringVar(&model, "model", "", "Claude model to use (e.g. sonnet, haiku, opus)")
 
 	return cmd
 }
