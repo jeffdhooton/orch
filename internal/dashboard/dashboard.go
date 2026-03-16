@@ -214,7 +214,7 @@ func (m model) View() string {
 		// Table header.
 		header := fmt.Sprintf("  %-15s %-12s %-10s %-35s %s", "NAME", "ROLE", "STATUS", "DIR", "LAST ACTIVITY")
 		b.WriteString(headerStyle.Render(header) + "\n")
-		b.WriteString(dimStyle.Render("  " + strings.Repeat("─", min(m.width-4, 96))) + "\n")
+		b.WriteString(dimStyle.Render("  "+strings.Repeat("─", min(m.width-4, 96))) + "\n")
 
 		// Agent rows.
 		for i, a := range m.agents {
