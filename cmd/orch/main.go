@@ -37,6 +37,7 @@ func main() {
 	rootCmd.AddCommand(
 		initCmd(log),
 		upCmd(log),
+		upDirCmd(log),
 		downCmd(log),
 		psCmd(log),
 		sendCmd(log),
@@ -137,6 +138,100 @@ func upCmd(log *slog.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", "", "Working directory (defaults to current directory)")
 	cmd.Flags().StringVar(&specPath, "spec", "", "Path to a spec file to send as the first message")
 	cmd.Flags().BoolVar(&skipPermissions, "skip-permissions", true, "Pass --dangerously-skip-permissions to claude (default: true for autonomous agents)")
+	cmd.Flags().BoolVar(&noScheduler, "no-scheduler", false, "Don't auto-start the background scheduler")
+
+	return cmd
+}
+
+func upDirCmd(log *slog.Logger) *cobra.Command {
+	var dir, prefix string
+	var skipPermissions, noScheduler bool
+
+	cmd := &cobra.Command{
+		Use:   "up-dir <spec-directory>",
+		Short: "Spin up agents for every spec file in a directory",
+		Long:  "Scans a directory for *.md files and creates one agent per file. The filename (minus .md) is used as the role, and the agent name is derived from the role (optionally prefixed with --prefix).",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			specDir := args[0]
+
+			// Resolve spec directory.
+			absSpecDir, err := filepath.Abs(specDir)
+			if err != nil {
+				return fmt.Errorf("resolving spec directory: %w", err)
+			}
+			info, err := os.Stat(absSpecDir)
+			if err != nil {
+				return fmt.Errorf("spec directory %q: %w", absSpecDir, err)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("%q is not a directory", absSpecDir)
+			}
+
+			// Find all .md files in the directory.
+			entries, err := os.ReadDir(absSpecDir)
+			if err != nil {
+				return fmt.Errorf("reading spec directory: %w", err)
+			}
+			var specFiles []os.DirEntry
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+					specFiles = append(specFiles, e)
+				}
+			}
+			if len(specFiles) == 0 {
+				return fmt.Errorf("no .md spec files found in %s", absSpecDir)
+			}
+
+			if dir == "" {
+				dir, err = os.Getwd()
+				if err != nil {
+					return fmt.Errorf("getting working directory: %w", err)
+				}
+			}
+
+			database, err := openDB()
+			if err != nil {
+				return err
+			}
+			defer database.Close()
+
+			tc := tmux.New()
+			mgr := agent.New(database, tc, log)
+
+			for _, e := range specFiles {
+				role := strings.TrimSuffix(e.Name(), ".md")
+				name := role
+				if prefix != "" {
+					name = prefix + "-" + role
+				}
+				specPath := filepath.Join(absSpecDir, e.Name())
+
+				fmt.Printf("Starting agent %q (role: %s, spec: %s)\n", name, role, e.Name())
+				if err := mgr.Up(agent.UpOpts{
+					Name:            name,
+					Role:            role,
+					Dir:             dir,
+					SpecPath:        specPath,
+					SkipPermissions: skipPermissions,
+				}); err != nil {
+					return fmt.Errorf("starting agent %q: %w", name, err)
+				}
+			}
+
+			fmt.Printf("\n%d agent(s) started from %s\n", len(specFiles), absSpecDir)
+
+			if !noScheduler {
+				ensureScheduler(log)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", "", "Working directory for all agents (defaults to current directory)")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "Prefix for agent names (e.g. 'api' → 'api-engineer', 'api-pm')")
+	cmd.Flags().BoolVar(&skipPermissions, "skip-permissions", true, "Pass --dangerously-skip-permissions to claude")
 	cmd.Flags().BoolVar(&noScheduler, "no-scheduler", false, "Don't auto-start the background scheduler")
 
 	return cmd
