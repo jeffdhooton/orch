@@ -64,31 +64,57 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 			return fmt.Errorf("unknown role: %q (valid: engineer, pm, reviewer)", role)
 		}
 
-		fmt.Fprintf(os.Stderr, "Generating %s spec...", role)
+		fmt.Fprintf(os.Stderr, "Generating %s spec ", role)
 
 		userPrompt := prompt.BuildUserPrompt(opts.Analysis, opts.Task, role)
 		g.logf("system prompt length: %d chars", len(sp))
 		g.logf("user prompt length: %d chars", len(userPrompt))
-		// Log line is generated dynamically from callClaude — removed static string
 
+		// Run claude call with a spinner so the user knows it's working.
 		start := time.Now()
-		output, err := g.callClaude(ctx, sp, userPrompt)
-		elapsed := time.Since(start)
+		type result struct {
+			output string
+			err    error
+		}
+		ch := make(chan result, 1)
+		go func() {
+			out, err := g.callClaude(ctx, sp, userPrompt)
+			ch <- result{out, err}
+		}()
 
-		if err != nil {
-			fmt.Fprintf(os.Stderr, " failed\n")
-			g.logf("claude call failed after %s: %v", elapsed, err)
-			return fmt.Errorf("generating %s spec: %w", role, err)
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		ticker := time.NewTicker(100 * time.Millisecond)
+		fi := 0
+		var res result
+	spin:
+		for {
+			select {
+			case res = <-ch:
+				ticker.Stop()
+				break spin
+			case <-ticker.C:
+				elapsed := time.Since(start).Truncate(time.Second)
+				fmt.Fprintf(os.Stderr, "\r%s Generating %s spec %s", frames[fi%len(frames)], role, elapsed)
+				fi++
+			}
 		}
 
-		g.logf("claude responded in %s (%d chars)", elapsed, len(output))
+		elapsed := time.Since(start)
+
+		if res.err != nil {
+			fmt.Fprintf(os.Stderr, "\r✗ Generating %s spec failed (%s)\n", role, elapsed.Truncate(time.Second))
+			g.logf("claude call failed after %s: %v", elapsed, res.err)
+			return fmt.Errorf("generating %s spec: %w", role, res.err)
+		}
+
+		g.logf("claude responded in %s (%d chars)", elapsed, len(res.output))
 
 		outPath := filepath.Join(opts.OutputDir, role+".md")
-		if err := os.WriteFile(outPath, []byte(output), 0o644); err != nil {
+		if err := os.WriteFile(outPath, []byte(res.output), 0o644); err != nil {
 			return fmt.Errorf("writing %s spec: %w", role, err)
 		}
 
-		fmt.Fprintf(os.Stderr, " done → %s\n", outPath)
+		fmt.Fprintf(os.Stderr, "\r✓ Generated %s spec (%s) → %s\n", role, elapsed.Truncate(time.Second), outPath)
 	}
 
 	return nil
