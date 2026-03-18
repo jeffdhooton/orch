@@ -3,6 +3,7 @@ package generate
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,10 +22,12 @@ type Generator struct {
 
 // GenerateOpts configures spec generation.
 type GenerateOpts struct {
-	Analysis  *analyze.Analysis
-	Task      string
-	Roles     []string
-	OutputDir string
+	Analysis   *analyze.Analysis
+	Task       string
+	Roles      []string
+	OutputDir  string
+	SkillPaths []string // Plugin directories whose commands should appear in specs
+	PlanPath   string   // Path to an existing plan document to slice into role specs
 }
 
 // New creates a Generator.
@@ -59,6 +62,26 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 		"reviewer": reviewerSystemPrompt,
 	}
 
+	var planContent string
+	if opts.PlanPath != "" {
+		data, err := os.ReadFile(opts.PlanPath)
+		if err != nil {
+			return fmt.Errorf("reading plan file %s: %w", opts.PlanPath, err)
+		}
+		planContent = string(data)
+		g.logf("loaded plan document: %s (%d bytes)", opts.PlanPath, len(data))
+	}
+
+	var skillCommands []string
+	for _, sp := range opts.SkillPaths {
+		cmds, err := discoverSkillCommands(sp)
+		if err != nil {
+			g.logf("warning: could not scan skills at %s: %v", sp, err)
+			continue
+		}
+		skillCommands = append(skillCommands, cmds...)
+	}
+
 	for _, role := range opts.Roles {
 		sp, ok := systemPrompts[role]
 		if !ok {
@@ -67,7 +90,7 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 
 		fmt.Fprintf(os.Stderr, "Generating %s spec ", role)
 
-		userPrompt := prompt.BuildUserPrompt(opts.Analysis, opts.Task, role)
+		userPrompt := prompt.BuildUserPrompt(opts.Analysis, opts.Task, role, skillCommands, planContent)
 		g.logf("system prompt length: %d chars", len(sp))
 		g.logf("user prompt length: %d chars", len(userPrompt))
 
@@ -155,4 +178,54 @@ func (g *Generator) callClaude(ctx context.Context, systemPrompt, userPrompt str
 	}
 
 	return strings.TrimSpace(string(output)), nil
+}
+
+// discoverSkillCommands scans a skill/plugin directory for available
+// slash commands by reading .md files with YAML frontmatter.
+func discoverSkillCommands(dir string) ([]string, error) {
+	var commands []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		content := string(data)
+		if strings.HasPrefix(content, "---") {
+			name, desc := parseFrontmatter(content)
+			if name != "" {
+				entry := fmt.Sprintf("/%s — %s", name, desc)
+				commands = append(commands, entry)
+			}
+		}
+		return nil
+	})
+	return commands, err
+}
+
+// parseFrontmatter extracts the "name" and "description" fields from
+// YAML-style frontmatter delimited by "---".
+func parseFrontmatter(content string) (name, description string) {
+	parts := strings.SplitN(content, "---", 3)
+	if len(parts) < 3 {
+		return "", ""
+	}
+	fm := parts[1]
+	for _, line := range strings.Split(fm, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "name:") {
+			name = strings.TrimSpace(strings.TrimPrefix(line, "name:"))
+			name = strings.Trim(name, "\"'")
+		}
+		if strings.HasPrefix(line, "description:") {
+			description = strings.TrimSpace(strings.TrimPrefix(line, "description:"))
+			description = strings.Trim(description, "\"'")
+		}
+	}
+	return name, description
 }

@@ -18,16 +18,17 @@ Write the spec as plain markdown. Structure it as:
    - What files to create or modify (exact paths)
    - What the code should do (be specific about behavior, validation, error handling)
    - Include database schemas, API specs, or data structures if relevant
+   - **Gate check** — Exact commands to run after the phase is complete (test command, lint command, build command). List what "passing" looks like. DO NOT proceed to the next phase until the gate passes. If a gate fails, fix the issue before moving on.
 
 5. **Testing** — What to test, which framework, where test files go, test patterns to follow.
 
 6. **Workflow** — Numbered steps the agent should follow:
    - Implement one phase at a time
    - Write tests after each phase
-   - Run tests and make sure they pass before moving on
+   - Run the phase's gate check — all commands must pass before proceeding
    - Run lint/vet before every commit
    - Commit after each phase with a descriptive message
-   - Do not move to the next step until the current one's tests pass
+   - If a gate check fails, diagnose and fix before moving on — do not skip ahead
 
 ## Rules
 
@@ -35,5 +36,6 @@ Write the spec as plain markdown. Structure it as:
 - Use the correct build/test/lint commands for the detected tech stack.
 - Be specific about behavior, not vague. "Validate URL format" not "add validation."
 - Keep the spec focused on WHAT to build, not HOW to use orch.
+- Gate checks must be concrete and verifiable: "run go test ./... and verify 0 failures", not "check if things look good."
 - The agent uses .orch-send-<name> files to communicate with teammates and .orch-schedule files to schedule follow-ups, but you should not include instructions about these — orch handles that automatically.
 - Output ONLY the spec markdown. No preamble, no thinking, no introductory sentences. Start directly with the spec content.`

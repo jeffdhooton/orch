@@ -86,7 +86,7 @@ func initCmd(log *slog.Logger) *cobra.Command {
 }
 
 func upCmd(log *slog.Logger) *cobra.Command {
-	var role, dir, specPath string
+	var role, dir, specPath, skills string
 	var skipPermissions, noScheduler bool
 
 	cmd := &cobra.Command{
@@ -104,6 +104,11 @@ func upCmd(log *slog.Logger) *cobra.Command {
 				}
 			}
 
+			skillPaths, err := resolveSkillPaths(skills)
+			if err != nil {
+				return err
+			}
+
 			database, err := openDB()
 			if err != nil {
 				return err
@@ -119,6 +124,7 @@ func upCmd(log *slog.Logger) *cobra.Command {
 				Dir:             dir,
 				SpecPath:        specPath,
 				SkipPermissions: skipPermissions,
+				SkillPaths:      skillPaths,
 			}); err != nil {
 				return err
 			}
@@ -138,13 +144,14 @@ func upCmd(log *slog.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", "", "Working directory (defaults to current directory)")
 	cmd.Flags().StringVar(&specPath, "spec", "", "Path to a spec file to send as the first message")
 	cmd.Flags().BoolVar(&skipPermissions, "skip-permissions", true, "Pass --dangerously-skip-permissions to claude (default: true for autonomous agents)")
+	cmd.Flags().StringVar(&skills, "skills", "", "Comma-separated skill/plugin directories to load (e.g. gstack, ~/.claude/skills/custom)")
 	cmd.Flags().BoolVar(&noScheduler, "no-scheduler", false, "Don't auto-start the background scheduler")
 
 	return cmd
 }
 
 func upDirCmd(log *slog.Logger) *cobra.Command {
-	var dir, prefix string
+	var dir, prefix, skills string
 	var skipPermissions, noScheduler bool
 
 	cmd := &cobra.Command{
@@ -190,6 +197,11 @@ func upDirCmd(log *slog.Logger) *cobra.Command {
 				}
 			}
 
+			skillPaths, err := resolveSkillPaths(skills)
+			if err != nil {
+				return err
+			}
+
 			database, err := openDB()
 			if err != nil {
 				return err
@@ -214,6 +226,7 @@ func upDirCmd(log *slog.Logger) *cobra.Command {
 					Dir:             dir,
 					SpecPath:        specPath,
 					SkipPermissions: skipPermissions,
+					SkillPaths:      skillPaths,
 				}); err != nil {
 					return fmt.Errorf("starting agent %q: %w", name, err)
 				}
@@ -231,6 +244,7 @@ func upDirCmd(log *slog.Logger) *cobra.Command {
 
 	cmd.Flags().StringVar(&dir, "dir", "", "Working directory for all agents (defaults to current directory)")
 	cmd.Flags().StringVar(&prefix, "prefix", "", "Prefix for agent names (e.g. 'api' → 'api-engineer', 'api-pm')")
+	cmd.Flags().StringVar(&skills, "skills", "", "Comma-separated skill/plugin directories to load (e.g. gstack, ~/.claude/skills/custom)")
 	cmd.Flags().BoolVar(&skipPermissions, "skip-permissions", true, "Pass --dangerously-skip-permissions to claude")
 	cmd.Flags().BoolVar(&noScheduler, "no-scheduler", false, "Don't auto-start the background scheduler")
 
@@ -740,13 +754,13 @@ func statusCmd(log *slog.Logger) *cobra.Command {
 }
 
 func specgenCmd(log *slog.Logger) *cobra.Command {
-	var dir, task, name, output, roles, model string
+	var dir, task, name, output, roles, model, skills, fromPlan string
 	var analyzeOnly, verbose bool
 
 	cmd := &cobra.Command{
 		Use:   "specgen",
 		Short: "Generate role-specific specs for multi-agent workflows",
-		Long:  "Analyzes a codebase and generates engineer, PM, and reviewer specs.",
+		Long:  "Analyzes a codebase and generates engineer and reviewer specs.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dir == "" {
 				var err error
@@ -778,9 +792,9 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 				return nil
 			}
 
-			// Need --task for generation
-			if task == "" {
-				return fmt.Errorf("--task is required (or use --analyze)")
+			// Need --task or --from-plan for generation
+			if task == "" && fromPlan == "" {
+				return fmt.Errorf("either --task or --from-plan is required (or use --analyze)")
 			}
 
 			// Parse roles
@@ -792,8 +806,18 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 				if slug == "" {
 					slug = task
 				}
+				if slug == "" && fromPlan != "" {
+					// Use plan filename as slug
+					slug = strings.TrimSuffix(filepath.Base(fromPlan), filepath.Ext(fromPlan))
+				}
 				slug = slugify(slug)
 				output = filepath.Join(dir, "specs", slug)
+			}
+
+			// Resolve skill paths
+			skillPaths, err := resolveSkillPaths(skills)
+			if err != nil {
+				return err
 			}
 
 			// Generate specs
@@ -801,10 +825,12 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 			gen.Verbose = verbose
 			gen.Model = model
 			return gen.Generate(cmd.Context(), generate.GenerateOpts{
-				Analysis:  result,
-				Task:      task,
-				Roles:     roleList,
-				OutputDir: output,
+				Analysis:   result,
+				Task:       task,
+				Roles:      roleList,
+				OutputDir:  output,
+				SkillPaths: skillPaths,
+				PlanPath:   fromPlan,
 			})
 		},
 	}
@@ -813,12 +839,54 @@ func specgenCmd(log *slog.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&task, "task", "", "Task description for spec generation")
 	cmd.Flags().StringVar(&name, "name", "", "Short name for this spec set (auto-generated from task if omitted)")
 	cmd.Flags().StringVar(&output, "output", "", "Output directory (default: <dir>/specs/<name>/)")
-	cmd.Flags().StringVar(&roles, "roles", "engineer,pm,reviewer", "Comma-separated roles to generate")
+	cmd.Flags().StringVar(&roles, "roles", "engineer,reviewer", "Comma-separated roles to generate (available: engineer, reviewer, pm)")
 	cmd.Flags().BoolVar(&analyzeOnly, "analyze", false, "Just print codebase analysis, skip generation")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show detailed progress and timing for each step")
 	cmd.Flags().StringVar(&model, "model", "", "Claude model to use (e.g. sonnet, haiku, opus)")
+	cmd.Flags().StringVar(&skills, "skills", "", "Comma-separated skill/plugin directories whose commands should be referenced in generated specs")
+	cmd.Flags().StringVar(&fromPlan, "from-plan", "", "Path to an existing plan document to slice into role specs (skips task-based generation)")
 
 	return cmd
+}
+
+// resolveSkillPaths takes a comma-separated string of skill names or paths
+// and returns resolved absolute paths. Short names like "gstack" are expanded
+// to ~/.claude/skills/<name>.
+func resolveSkillPaths(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("getting home dir: %w", err)
+	}
+
+	var paths []string
+	for _, s := range strings.Split(raw, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if strings.Contains(s, "/") || strings.HasPrefix(s, "~") {
+			s = strings.Replace(s, "~", home, 1)
+			abs, err := filepath.Abs(s)
+			if err != nil {
+				return nil, fmt.Errorf("resolving skill path %q: %w", s, err)
+			}
+			paths = append(paths, abs)
+		} else {
+			candidate := filepath.Join(home, ".claude", "skills", s)
+			if _, err := os.Stat(candidate); err != nil {
+				candidate2 := filepath.Join(home, ".claude", "plugins", s)
+				if _, err2 := os.Stat(candidate2); err2 != nil {
+					return nil, fmt.Errorf("skill %q not found at %s or %s", s, candidate, candidate2)
+				}
+				candidate = candidate2
+			}
+			paths = append(paths, candidate)
+		}
+	}
+	return paths, nil
 }
 
 // slugify converts a task description into a filesystem-safe directory name.

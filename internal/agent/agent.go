@@ -39,7 +39,8 @@ type UpOpts struct {
 	Role            string
 	Dir             string
 	SpecPath        string
-	SkipPermissions bool // Pass --dangerously-skip-permissions to claude
+	SkipPermissions bool     // Pass --dangerously-skip-permissions to claude
+	SkillPaths      []string // Plugin directories to load via --plugin-dir
 }
 
 // Up creates and starts a new agent.
@@ -144,6 +145,10 @@ func (m *Manager) buildClaudeCmd(opts UpOpts, systemPrompt string) string {
 
 	if opts.SkipPermissions {
 		parts = append(parts, "--dangerously-skip-permissions")
+	}
+
+	for _, sp := range opts.SkillPaths {
+		parts = append(parts, "--plugin-dir", shellEscape(sp))
 	}
 
 	// Use --append-system-prompt to inject agent identity and team info
