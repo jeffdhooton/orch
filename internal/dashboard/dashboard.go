@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jeffdhooton/orch/internal/agent"
+	db "github.com/jeffdhooton/orch/internal/db"
 	"github.com/jeffdhooton/orch/internal/messenger"
 	"github.com/jeffdhooton/orch/internal/scheduler"
 	"github.com/jeffdhooton/orch/internal/tmux"
@@ -22,7 +25,17 @@ import (
 func Run(database *sql.DB, log *slog.Logger) error {
 	tc := tmux.New()
 	msg := messenger.New(database, tc)
-	sched := scheduler.New(database, msg, log)
+
+	// Redirect scheduler logs to a file so they don't corrupt the TUI.
+	schedLog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})) // discard
+	if orchDir, err := db.DefaultDir(); err == nil {
+		logFile := filepath.Join(orchDir, "scheduler.log")
+		if f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+			schedLog = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		}
+	}
+
+	sched := scheduler.New(database, msg, schedLog)
 	mgr := agent.New(database, tc, log)
 
 	// Start the scheduler in the background.
