@@ -23,19 +23,20 @@ import (
 
 // Run starts the dashboard TUI. It blocks until the user quits.
 func Run(database *sql.DB, log *slog.Logger) error {
-	tc := tmux.New()
-	msg := messenger.New(database, tc)
-
-	// Redirect scheduler logs to a file so they don't corrupt the TUI.
-	schedLog := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1})) // discard
+	// Redirect stdout/stderr to a log file so nothing corrupts the TUI.
+	// Any stray writes (scheduler logs, exec.Command stderr, etc.) go here.
 	if orchDir, err := db.DefaultDir(); err == nil {
-		logFile := filepath.Join(orchDir, "scheduler.log")
+		logFile := filepath.Join(orchDir, "dashboard.log")
 		if f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
-			schedLog = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo}))
+			os.Stdout = f
+			os.Stderr = f
+			log = slog.New(slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo}))
 		}
 	}
 
-	sched := scheduler.New(database, msg, schedLog)
+	tc := tmux.New()
+	msg := messenger.New(database, tc)
+	sched := scheduler.New(database, msg, log)
 	mgr := agent.New(database, tc, log)
 
 	// Start the scheduler in the background.
