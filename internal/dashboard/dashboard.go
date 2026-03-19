@@ -23,6 +23,9 @@ import (
 
 // Run starts the dashboard TUI. It blocks until the user quits.
 func Run(database *sql.DB, log *slog.Logger) error {
+	// Save the real stdout for bubbletea before redirecting.
+	ttyOut := os.Stdout
+
 	// Redirect stdout/stderr to a log file so nothing corrupts the TUI.
 	// Any stray writes (scheduler logs, exec.Command stderr, etc.) go here.
 	if orchDir, err := db.DefaultDir(); err == nil {
@@ -45,7 +48,7 @@ func Run(database *sql.DB, log *slog.Logger) error {
 	go sched.Run(ctx, 30*time.Second, 10*time.Second)
 
 	m := newModel(database, mgr, tc)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(ttyOut))
 	_, err := p.Run()
 	return err
 }
