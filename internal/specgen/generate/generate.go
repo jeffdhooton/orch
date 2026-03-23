@@ -59,7 +59,7 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 	systemPrompts := map[string]string{
 		"engineer": engineerSystemPrompt,
 		"pm":       pmSystemPrompt,
-		"reviewer": reviewerSystemPrompt,
+		"reviewer": buildReviewerSystemPrompt(opts.Roles),
 	}
 
 	var planContent string
@@ -90,7 +90,7 @@ func (g *Generator) Generate(ctx context.Context, opts GenerateOpts) error {
 
 		fmt.Fprintf(os.Stderr, "Generating %s spec ", role)
 
-		userPrompt := prompt.BuildUserPrompt(opts.Analysis, opts.Task, role, skillCommands, planContent)
+		userPrompt := prompt.BuildUserPrompt(opts.Analysis, opts.Task, role, skillCommands, planContent, opts.Roles...)
 		g.logf("system prompt length: %d chars", len(sp))
 		g.logf("user prompt length: %d chars", len(userPrompt))
 

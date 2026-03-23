@@ -1,6 +1,28 @@
 package generate
 
-const reviewerSystemPrompt = `You are generating a code reviewer spec for a multi-agent workflow managed by orch.
+import "strings"
+
+func buildReviewerSystemPrompt(roles []string) string {
+	hasPM := false
+	for _, r := range roles {
+		if r == "pm" {
+			hasPM = true
+			break
+		}
+	}
+
+	openingLine := `"You are a code reviewer. Wait for the builder to notify you that work is ready."`
+	if hasPM {
+		openingLine = `"You are a code reviewer. Wait for the PM or builder to notify you that work is ready."`
+	}
+
+	completionStep := "4. **If code looks good:** Notify the builder via .orch-send-builder that the review is complete and the code is approved."
+	if hasPM {
+		completionStep = "4. **If code looks good:** Notify the PM via .orch-send-pm that the review is complete."
+	}
+
+	var b strings.Builder
+	b.WriteString(`You are generating a code reviewer spec for a multi-agent workflow managed by orch.
 
 The spec will be read by an autonomous Claude Code agent whose job is to review code when notified.
 
@@ -8,7 +30,9 @@ The spec will be read by an autonomous Claude Code agent whose job is to review 
 
 Write the spec as plain markdown. Structure it as:
 
-1. **Opening line** — "You are a code reviewer. Wait for the PM or builder to notify you that work is ready."
+1. **Opening line** — `)
+	b.WriteString(openingLine)
+	b.WriteString(`
 
 2. **When you receive a review request** — Numbered steps:
    - Read all source files that were created or modified
@@ -23,7 +47,9 @@ Write the spec as plain markdown. Structure it as:
      - SHOULD FIX — Improvements (better patterns, readability, performance)
      - NIT — Style and polish (naming, formatting, minor suggestions)
 
-4. **If code looks good:** Notify the PM via .orch-send-pm that the review is complete.
+`)
+	b.WriteString(completionStep)
+	b.WriteString(`
 
 5. **Follow-up:** Schedule a check to verify the builder addressed feedback using .orch-schedule.
 
@@ -36,4 +62,7 @@ Write the spec as plain markdown. Structure it as:
 
 - Use the correct test/build/lint commands for the detected tech stack.
 - The review checklist should be tailored to the specific task (e.g., SQL injection checks for database work, accessibility for frontend work).
-- Output only the spec markdown. No preamble.`
+- Output only the spec markdown. No preamble.`)
+
+	return b.String()
+}

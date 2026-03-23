@@ -8,7 +8,7 @@ import (
 )
 
 // BuildUserPrompt constructs the user-facing prompt sent to Claude for spec generation.
-func BuildUserPrompt(analysis *analyze.Analysis, task string, role string, skillCommands []string, planContent string) string {
+func BuildUserPrompt(analysis *analyze.Analysis, task string, role string, skillCommands []string, planContent string, roles ...string) string {
 	var b strings.Builder
 
 	if planContent != "" {
@@ -36,6 +36,15 @@ func BuildUserPrompt(analysis *analyze.Analysis, task string, role string, skill
 			b.WriteString(fmt.Sprintf("- %s\n", cmd))
 		}
 		b.WriteString("\n")
+	}
+
+	if len(roles) > 0 {
+		b.WriteString("\n## Team Composition\n\n")
+		b.WriteString("The following agent roles are active in this workflow:\n")
+		for _, r := range roles {
+			b.WriteString(fmt.Sprintf("- %s\n", r))
+		}
+		b.WriteString("\nOnly reference agents that are listed above. Do not include instructions about communicating with agents that are not part of this workflow.\n")
 	}
 
 	b.WriteString(fmt.Sprintf("\n## Generate the %s spec\n", role))
