@@ -3,10 +3,12 @@ package messenger
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
 	"github.com/jeffdhooton/orch/internal/db"
+	"github.com/jeffdhooton/orch/internal/inbox"
 	"github.com/jeffdhooton/orch/internal/tmux"
 )
 
@@ -14,11 +16,15 @@ import (
 type Messenger struct {
 	DB   *sql.DB
 	Tmux tmux.Runner
+	Log  *slog.Logger
 }
 
 // New creates a new Messenger.
-func New(database *sql.DB, tc tmux.Runner) *Messenger {
-	return &Messenger{DB: database, Tmux: tc}
+func New(database *sql.DB, tc tmux.Runner, log *slog.Logger) *Messenger {
+	if log == nil {
+		log = slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
+	return &Messenger{DB: database, Tmux: tc, Log: log}
 }
 
 // Send records a message in the DB and delivers it to the agent's tmux window.
@@ -63,5 +69,33 @@ func (m *Messenger) Send(from, agentName, content string) error {
 		return fmt.Errorf("updating agent activity: %w", err)
 	}
 
+	// Write to gstack global inbox so non-orch CC sessions can see the message.
+	m.writeToInbox(from, agent, content)
+
 	return nil
+}
+
+// writeToInbox writes a copy of the message to ~/.gstack/inbox/messages/.
+// Failures are logged but don't fail the send — inbox is best-effort.
+func (m *Messenger) writeToInbox(from string, agent *db.Agent, content string) {
+	// Determine inbox message type based on the sender.
+	msgType := "info"
+	switch from {
+	case "scheduler", "inactivity-nudge", "inbox":
+		return // Internal housekeeping or already from inbox, don't broadcast.
+	case "git-watcher":
+		msgType = "info"
+	case "user":
+		msgType = "info"
+	default:
+		// Agent-to-agent message — treat as a handoff/unblock.
+		msgType = "handoff"
+	}
+
+	senderFrom := inbox.AgentFrom(agent.Dir, from, "")
+	target := filepath.Base(agent.Dir) // project-scoped by default
+
+	if err := inbox.SendMessage(msgType, senderFrom, target, content); err != nil {
+		m.Log.Warn("failed to write inbox message", "error", err)
+	}
 }

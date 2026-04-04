@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jeffdhooton/orch/internal/db"
+	"github.com/jeffdhooton/orch/internal/inbox"
 	"github.com/jeffdhooton/orch/internal/messenger"
 )
 
@@ -24,21 +25,23 @@ const NudgeCooldown = 10 * time.Minute
 
 // Scheduler polls for due schedules and agent file-based requests.
 type Scheduler struct {
-	DB          *sql.DB
-	Messenger   *messenger.Messenger
-	Log         *slog.Logger
-	lastCommits map[string]string    // dir -> last known commit hash
-	lastNudge   map[string]time.Time // agent name -> last nudge time
+	DB              *sql.DB
+	Messenger       *messenger.Messenger
+	Log             *slog.Logger
+	lastCommits     map[string]string    // dir -> last known commit hash
+	lastNudge       map[string]time.Time // agent name -> last nudge time
+	lastInboxCheck  int64                // unix timestamp of last inbox poll
 }
 
 // New creates a new Scheduler.
 func New(database *sql.DB, msg *messenger.Messenger, log *slog.Logger) *Scheduler {
 	return &Scheduler{
-		DB:          database,
-		Messenger:   msg,
-		Log:         log,
-		lastCommits: make(map[string]string),
-		lastNudge:   make(map[string]time.Time),
+		DB:             database,
+		Messenger:      msg,
+		Log:            log,
+		lastCommits:    make(map[string]string),
+		lastNudge:      make(map[string]time.Time),
+		lastInboxCheck: time.Now().Unix(), // only process messages arriving after startup
 	}
 }
 
@@ -52,6 +55,7 @@ func (s *Scheduler) RunOnce() error {
 	}
 	s.processGitCommits()
 	s.nudgeInactiveAgents()
+	s.pollInbox()
 	return nil
 }
 
@@ -80,6 +84,7 @@ func (s *Scheduler) Run(ctx context.Context, scheduleInterval, fileInterval time
 			}
 			s.processGitCommits()
 			s.nudgeInactiveAgents()
+			s.pollInbox()
 
 			// Auto-exit when no running agents remain.
 			agents, err := db.ListAgents(s.DB, "running")
@@ -141,6 +146,13 @@ func (s *Scheduler) processDoneFile(agent db.Agent) {
 
 	if err := db.UpdateAgentStatus(s.DB, agent.Name, "done"); err != nil {
 		s.Log.Error("updating agent status to done", "agent", agent.Name, "error", err)
+	}
+
+	// Broadcast completion to the gstack inbox.
+	from := inbox.AgentFrom(agent.Dir, agent.Name, agent.Role)
+	body := fmt.Sprintf("Agent %q (%s) completed.\n\n%s", agent.Name, agent.Role, summary)
+	if err := inbox.SendMessage("info", from, "all", body); err != nil {
+		s.Log.Warn("failed to write done inbox message", "agent", agent.Name, "error", err)
 	}
 
 	os.Remove(path)
@@ -315,6 +327,60 @@ func (s *Scheduler) nudgeInactiveAgents() {
 		} else {
 			s.Log.Info("nudged inactive agent", "agent", agent.Name, "inactive_minutes", mins)
 			s.lastNudge[agent.Name] = now
+		}
+	}
+}
+
+// pollInbox reads new messages from the gstack global inbox that were sent by
+// non-orch sessions and delivers them to the appropriate orch agents.
+func (s *Scheduler) pollInbox() {
+	agents, err := db.ListAgents(s.DB, "running")
+	if err != nil || len(agents) == 0 {
+		return
+	}
+
+	// Build a set of project names this orch run covers.
+	projects := make(map[string][]db.Agent)
+	for _, a := range agents {
+		proj := filepath.Base(a.Dir)
+		projects[proj] = append(projects[proj], a)
+	}
+
+	// Read all messages since our last check.
+	// Use empty target to get everything, then filter ourselves.
+	msgs, err := inbox.ReadMessages("", s.lastInboxCheck)
+	if err != nil {
+		s.Log.Warn("polling inbox", "error", err)
+		return
+	}
+
+	for _, msg := range msgs {
+		// Skip messages from orch agents — we already delivered those via tmux.
+		if inbox.IsOrchMessage(msg.From) {
+			continue
+		}
+
+		// Track the highest timestamp we've seen.
+		if msg.FileTime > s.lastInboxCheck {
+			s.lastInboxCheck = msg.FileTime
+		}
+
+		// Determine which agents should receive this message.
+		var targets []db.Agent
+		if msg.Target == "all" {
+			targets = agents
+		} else if matched, ok := projects[msg.Target]; ok {
+			targets = matched
+		}
+
+		// Deliver to each matching agent.
+		for _, a := range targets {
+			content := fmt.Sprintf("[inbox from %s] %s", msg.From, msg.Body)
+			if err := s.Messenger.Send("inbox", a.Name, content); err != nil {
+				s.Log.Error("delivering inbox message to agent", "agent", a.Name, "error", err)
+			} else {
+				s.Log.Info("delivered inbox message to agent", "agent", a.Name, "from", msg.From)
+			}
 		}
 	}
 }

@@ -367,7 +367,7 @@ func sendCmd(log *slog.Logger) *cobra.Command {
 			defer database.Close()
 
 			tc := tmux.New()
-			msg := messenger.New(database, tc)
+			msg := messenger.New(database, tc, log)
 
 			if err := msg.Send("user", name, message); err != nil {
 				return err
@@ -568,7 +568,7 @@ func schedulerCmd(log *slog.Logger) *cobra.Command {
 			defer database.Close()
 
 			tc := tmux.New()
-			msg := messenger.New(database, tc)
+			msg := messenger.New(database, tc, log)
 			sched := scheduler.New(database, msg, log)
 
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

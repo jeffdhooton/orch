@@ -38,7 +38,7 @@ func Run(database *sql.DB, log *slog.Logger) error {
 	}
 
 	tc := tmux.New()
-	msg := messenger.New(database, tc)
+	msg := messenger.New(database, tc, log)
 	sched := scheduler.New(database, msg, log)
 	mgr := agent.New(database, tc, log)
 

@@ -1,10 +1,13 @@
 package messenger
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jeffdhooton/orch/internal/db"
+	"github.com/jeffdhooton/orch/internal/inbox"
 	"github.com/jeffdhooton/orch/internal/tmux"
 )
 
@@ -24,7 +27,7 @@ func testSetup(t *testing.T) (*db.Agent, *tmux.Mock, *Messenger) {
 	// Insert a running agent.
 	db.InsertAgent(database, "builder", "engineer", "/tmp", "", "orch", "builder")
 
-	msg := New(database, tc)
+	msg := New(database, tc, nil)
 	agent, _ := db.GetAgent(database, "builder")
 	return agent, tc, msg
 }
@@ -107,5 +110,92 @@ func TestSendMultipleMessages(t *testing.T) {
 	msgs, _ := db.ListMessages(msg.DB, "builder", 0)
 	if len(msgs) != 3 {
 		t.Errorf("expected 3 messages in DB, got %d", len(msgs))
+	}
+}
+
+func setupInbox(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "messages")
+	os.MkdirAll(dir, 0755)
+	restore := inbox.SetDirForTest(dir)
+	t.Cleanup(restore)
+	return dir
+}
+
+func TestSendWritesToInbox(t *testing.T) {
+	_, _, msg := testSetup(t)
+	inboxDir := setupInbox(t)
+
+	msg.Send("user", "builder", "hello from user")
+
+	// Check that an inbox message was written.
+	entries, err := os.ReadDir(inboxDir)
+	if err != nil {
+		t.Fatalf("reading inbox dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 inbox file, got %d", len(entries))
+	}
+
+	content, _ := os.ReadFile(filepath.Join(inboxDir, entries[0].Name()))
+	s := string(content)
+	if !strings.Contains(s, "type: info") {
+		t.Error("expected type: info for user message")
+	}
+	if !strings.Contains(s, "hello from user") {
+		t.Error("expected message body in inbox file")
+	}
+}
+
+func TestSendAgentToAgentWritesHandoff(t *testing.T) {
+	_, _, msg := testSetup(t)
+	inboxDir := setupInbox(t)
+
+	msg.Send("reviewer", "builder", "fix the tests")
+
+	entries, _ := os.ReadDir(inboxDir)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 inbox file, got %d", len(entries))
+	}
+
+	content, _ := os.ReadFile(filepath.Join(inboxDir, entries[0].Name()))
+	if !strings.Contains(string(content), "type: handoff") {
+		t.Error("expected type: handoff for agent-to-agent message")
+	}
+}
+
+func TestSendSchedulerSkipsInbox(t *testing.T) {
+	_, _, msg := testSetup(t)
+	inboxDir := setupInbox(t)
+
+	msg.Send("scheduler", "builder", "scheduled check")
+
+	entries, _ := os.ReadDir(inboxDir)
+	if len(entries) != 0 {
+		t.Errorf("expected 0 inbox files for scheduler message, got %d", len(entries))
+	}
+}
+
+func TestSendInactivityNudgeSkipsInbox(t *testing.T) {
+	_, _, msg := testSetup(t)
+	inboxDir := setupInbox(t)
+
+	msg.Send("inactivity-nudge", "builder", "wake up")
+
+	entries, _ := os.ReadDir(inboxDir)
+	if len(entries) != 0 {
+		t.Errorf("expected 0 inbox files for nudge message, got %d", len(entries))
+	}
+}
+
+func TestSendFromInboxSkipsInbox(t *testing.T) {
+	_, _, msg := testSetup(t)
+	inboxDir := setupInbox(t)
+
+	msg.Send("inbox", "builder", "external message")
+
+	entries, _ := os.ReadDir(inboxDir)
+	if len(entries) != 0 {
+		t.Errorf("expected 0 inbox files for inbox-sourced message, got %d", len(entries))
 	}
 }
