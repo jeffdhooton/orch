@@ -162,9 +162,12 @@ func TestListMessagesLimit(t *testing.T) {
 func TestScheduleRoundTrip(t *testing.T) {
 	d := testDB(t)
 
+	// Schedule delivery requires a registered agent with matching dir.
+	InsertAgent(d, "builder", "engineer", "/tmp/work", "", "orch", "builder")
+
 	// Insert a schedule in the past so it's immediately due.
 	past := time.Now().Add(-1 * time.Minute)
-	if err := InsertSchedule(d, "builder", past, "check status"); err != nil {
+	if err := InsertSchedule(d, "builder", "/tmp/work", past, "check status"); err != nil {
 		t.Fatalf("inserting schedule: %v", err)
 	}
 
@@ -189,8 +192,10 @@ func TestScheduleRoundTrip(t *testing.T) {
 func TestScheduleFutureNotDue(t *testing.T) {
 	d := testDB(t)
 
+	InsertAgent(d, "builder", "engineer", "/tmp/work", "", "orch", "builder")
+
 	future := time.Now().Add(1 * time.Hour)
-	InsertSchedule(d, "builder", future, "later")
+	InsertSchedule(d, "builder", "/tmp/work", future, "later")
 
 	due, err := DueSchedules(d)
 	if err != nil {

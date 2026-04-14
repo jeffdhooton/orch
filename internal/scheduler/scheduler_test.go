@@ -41,9 +41,11 @@ func testSetup(t *testing.T) (*tmux.Mock, *Scheduler, string) {
 func TestProcessDueSchedules(t *testing.T) {
 	tc, sched, _ := testSetup(t)
 
-	// Insert a schedule in the past.
+	// Insert a schedule in the past. Use the builder's dir so the schedule
+	// passes project scoping.
+	builder, _ := db.GetAgent(sched.DB, "builder")
 	past := time.Now().Add(-1 * time.Minute)
-	db.InsertSchedule(sched.DB, "builder", past, "check status")
+	db.InsertSchedule(sched.DB, "builder", builder.Dir, past, "check status")
 
 	sched.RunOnce()
 
@@ -65,8 +67,9 @@ func TestProcessDueSchedules(t *testing.T) {
 func TestFutureScheduleNotExecuted(t *testing.T) {
 	tc, sched, _ := testSetup(t)
 
+	builder, _ := db.GetAgent(sched.DB, "builder")
 	future := time.Now().Add(1 * time.Hour)
-	db.InsertSchedule(sched.DB, "builder", future, "later")
+	db.InsertSchedule(sched.DB, "builder", builder.Dir, future, "later")
 
 	sched.RunOnce()
 

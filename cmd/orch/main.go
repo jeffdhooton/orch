@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,6 +26,10 @@ import (
 	"github.com/jeffdhooton/orch/internal/tmux"
 	"github.com/spf13/cobra"
 )
+
+// version is injected via -ldflags "-X main.version=...". When unset (plain
+// `go build`), falls back to VCS info embedded by the Go toolchain.
+var version = "dev"
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -51,6 +56,7 @@ func main() {
 		statusCmd(log),
 		specgenCmd(log),
 		schedulerRestartCmd(log),
+		versionCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -460,8 +466,16 @@ func scheduleCmd(log *slog.Logger) *cobra.Command {
 			}
 			defer database.Close()
 
+			// Look up the agent to scope the schedule to its working dir.
+			// Prevents cross-project bleed if the name is later rebound
+			// elsewhere before this schedule fires.
+			a, err := db.GetAgent(database, name)
+			if err != nil {
+				return err
+			}
+
 			runAt := time.Now().Add(time.Duration(minutes) * time.Minute)
-			if err := db.InsertSchedule(database, name, runAt, note); err != nil {
+			if err := db.InsertSchedule(database, name, a.Dir, runAt, note); err != nil {
 				return err
 			}
 
@@ -1030,6 +1044,46 @@ func ensureScheduler(log *slog.Logger) {
 	// Write PID file.
 	os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
 	fmt.Printf("Scheduler started (pid %d, log: %s)\n", cmd.Process.Pid, logFile)
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the orch build version and commit",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ver := version
+			commit := ""
+			modified := false
+			if info, ok := debug.ReadBuildInfo(); ok {
+				for _, s := range info.Settings {
+					switch s.Key {
+					case "vcs.revision":
+						commit = s.Value
+					case "vcs.modified":
+						modified = s.Value == "true"
+					}
+				}
+				// If no ldflag override, prefer the main module version when present.
+				if ver == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+					ver = info.Main.Version
+				}
+			}
+
+			fmt.Printf("orch %s\n", ver)
+			if commit != "" {
+				short := commit
+				if len(short) > 12 {
+					short = short[:12]
+				}
+				suffix := ""
+				if modified {
+					suffix = "-dirty"
+				}
+				fmt.Printf("commit %s%s\n", short, suffix)
+			}
+			return nil
+		},
+	}
 }
 
 func schedulerRestartCmd(log *slog.Logger) *cobra.Command {

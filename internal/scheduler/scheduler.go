@@ -102,6 +102,15 @@ func (s *Scheduler) Run(ctx context.Context, scheduleInterval, fileInterval time
 }
 
 func (s *Scheduler) processDueSchedules() error {
+	// Clear out any schedules whose target (agent_name, dir) no longer matches
+	// a registered agent — these are zombies from prior orch runs that would
+	// otherwise remain unexecuted forever.
+	if n, err := db.PurgeOrphanSchedules(s.DB); err != nil {
+		s.Log.Warn("purging orphan schedules", "error", err)
+	} else if n > 0 {
+		s.Log.Info("purged orphan schedules", "count", n)
+	}
+
 	schedules, err := db.DueSchedules(s.DB)
 	if err != nil {
 		return fmt.Errorf("querying due schedules: %w", err)
@@ -183,7 +192,7 @@ func (s *Scheduler) processScheduleFile(agent db.Agent) {
 	note := parts[1]
 	runAt := time.Now().Add(time.Duration(minutes) * time.Minute)
 
-	if err := db.InsertSchedule(s.DB, agent.Name, runAt, note); err != nil {
+	if err := db.InsertSchedule(s.DB, agent.Name, agent.Dir, runAt, note); err != nil {
 		s.Log.Error("inserting schedule from file", "agent", agent.Name, "error", err)
 	} else {
 		s.Log.Info("scheduled from agent file", "agent", agent.Name, "minutes", minutes, "note", note)

@@ -54,9 +54,38 @@ func Open(dbPath string) (*sql.DB, error) {
 }
 
 func migrate(db *sql.DB) error {
-	_, err := db.Exec(Schema)
-	if err != nil {
+	if _, err := db.Exec(Schema); err != nil {
 		return fmt.Errorf("executing schema: %w", err)
 	}
+
+	// Idempotent: add the dir column to schedule for databases that predate
+	// project-scoped schedules. Schedules without a dir (i.e. empty string)
+	// from older runs are treated as cross-project zombies and filtered out
+	// by DueSchedules.
+	if !columnExists(db, "schedule", "dir") {
+		if _, err := db.Exec(`ALTER TABLE schedule ADD COLUMN dir TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("adding schedule.dir column: %w", err)
+		}
+	}
 	return nil
+}
+
+func columnExists(db *sql.DB, table, column string) bool {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
 }

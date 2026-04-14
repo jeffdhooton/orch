@@ -35,6 +35,7 @@ type Message struct {
 type Schedule struct {
 	ID        int64
 	AgentName string
+	Dir       string
 	RunAt     time.Time
 	Note      string
 	Executed  bool
@@ -213,11 +214,13 @@ func scanMessages(db *sql.DB, query string, args []any) ([]Message, error) {
 	return msgs, rows.Err()
 }
 
-// InsertSchedule adds a scheduled message.
-func InsertSchedule(db *sql.DB, agentName string, runAt time.Time, note string) error {
+// InsertSchedule adds a scheduled message. dir scopes the schedule to a
+// specific working directory so it cannot leak to an unrelated project that
+// happens to reuse the agent name.
+func InsertSchedule(db *sql.DB, agentName, dir string, runAt time.Time, note string) error {
 	_, err := db.Exec(
-		`INSERT INTO schedule (agent_name, run_at, note) VALUES (?, ?, ?)`,
-		agentName, runAt.UTC().Format("2006-01-02 15:04:05"), note,
+		`INSERT INTO schedule (agent_name, dir, run_at, note) VALUES (?, ?, ?, ?)`,
+		agentName, dir, runAt.UTC().Format("2006-01-02 15:04:05"), note,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting schedule: %w", err)
@@ -225,12 +228,18 @@ func InsertSchedule(db *sql.DB, agentName string, runAt time.Time, note string) 
 	return nil
 }
 
-// DueSchedules returns all unexecuted schedules that are past their run_at time.
+// DueSchedules returns unexecuted schedules past their run_at time whose
+// (agent_name, dir) tuple matches a currently-registered agent. Schedules
+// with no matching agent (including legacy rows with empty dir) are filtered
+// out here, and callers should purge them via PurgeOrphanSchedules so they
+// don't accumulate.
 func DueSchedules(db *sql.DB) ([]Schedule, error) {
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	rows, err := db.Query(
-		`SELECT id, agent_name, run_at, note, executed, created_at
-		 FROM schedule WHERE executed = 0 AND run_at <= ?`, now,
+		`SELECT s.id, s.agent_name, s.dir, s.run_at, s.note, s.executed, s.created_at
+		 FROM schedule s
+		 INNER JOIN agents a ON a.name = s.agent_name AND a.dir = s.dir
+		 WHERE s.executed = 0 AND s.run_at <= ? AND s.dir != ''`, now,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying due schedules: %w", err)
@@ -240,12 +249,51 @@ func DueSchedules(db *sql.DB) ([]Schedule, error) {
 	var schedules []Schedule
 	for rows.Next() {
 		var s Schedule
-		if err := rows.Scan(&s.ID, &s.AgentName, &s.RunAt, &s.Note, &s.Executed, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.AgentName, &s.Dir, &s.RunAt, &s.Note, &s.Executed, &s.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning schedule row: %w", err)
 		}
 		schedules = append(schedules, s)
 	}
 	return schedules, rows.Err()
+}
+
+// PurgeOrphanSchedules marks as executed any pending schedules that cannot be
+// delivered: legacy rows with empty dir, or rows whose (agent_name, dir) does
+// not match any registered agent. Prevents cross-project bleed when an agent
+// name gets reused in a different working directory.
+func PurgeOrphanSchedules(db *sql.DB) (int64, error) {
+	res, err := db.Exec(
+		`UPDATE schedule
+		 SET executed = 1
+		 WHERE executed = 0
+		   AND (dir = ''
+		        OR NOT EXISTS (
+		            SELECT 1 FROM agents a
+		            WHERE a.name = schedule.agent_name AND a.dir = schedule.dir
+		        ))`,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("purging orphan schedules: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// DeletePendingSchedulesForAgent removes any unexecuted schedules for the
+// given agent name whose dir does not match the supplied dir. Used when an
+// agent is (re-)registered so stale schedules from a prior project don't
+// survive the new binding.
+func DeletePendingSchedulesForAgent(db *sql.DB, agentName, dir string) (int64, error) {
+	res, err := db.Exec(
+		`DELETE FROM schedule
+		 WHERE executed = 0 AND agent_name = ? AND dir != ?`,
+		agentName, dir,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("deleting stale schedules: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // MarkScheduleExecuted marks a schedule as executed.

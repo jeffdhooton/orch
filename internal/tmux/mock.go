@@ -68,6 +68,15 @@ func (m *Mock) SendKeys(session, window, text string) error {
 	return nil
 }
 
+// SendMessage records into the same SentKeys slice so tests can assert on
+// delivered messages without caring which transport path was used.
+func (m *Mock) SendMessage(session, window, text string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.SentKeys = append(m.SentKeys, SentKey{session, window, text})
+	return nil
+}
+
 func (m *Mock) CapturePane(session, window string, lines int) (string, error) {
 	return "mock pane output\n", nil
 }

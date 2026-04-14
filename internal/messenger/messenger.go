@@ -54,8 +54,10 @@ func (m *Messenger) Send(from, agentName, content string) error {
 		return fmt.Errorf("recording message: %w", err)
 	}
 
-	// Deliver via tmux.
-	if err := m.Tmux.SendKeys(agent.TmuxSession, agent.TmuxWindow, content); err != nil {
+	// Deliver via tmux paste-buffer + Enter. Using SendKeys here fails on
+	// Claude Code v2.1.105+, which treats rapid send-keys input as a paste
+	// and swallows the trailing Enter.
+	if err := m.Tmux.SendMessage(agent.TmuxSession, agent.TmuxWindow, content); err != nil {
 		return fmt.Errorf("delivering message via tmux: %w", err)
 	}
 

@@ -17,6 +17,7 @@ type Runner interface {
 	NewWindow(session, name, dir string) error
 	KillWindow(session, name string) error
 	SendKeys(session, window, text string) error
+	SendMessage(session, window, text string) error
 	CapturePane(session, window string, lines int) (string, error)
 	SelectWindow(session, name string) error
 	KillSession(session string) error
@@ -68,16 +69,12 @@ func (c *Client) KillWindow(session, name string) error {
 	return nil
 }
 
-// SendKeys sends text to a tmux window, followed by Enter.
-// For multiline text, it uses tmux load-buffer/paste-buffer to avoid
-// garbled input, then sends Enter separately after a short delay.
+// SendKeys sends text to a tmux window followed by Enter, as raw keystrokes.
+// Use for shell commands (e.g. launching claude). For delivering messages to
+// a running Claude Code TUI, use SendMessage instead — CC v2.1.105+ treats
+// rapid keystroke bursts as pastes and absorbs the trailing Enter.
 func (c *Client) SendKeys(session, window, text string) error {
 	target := session + ":" + window
-
-	if strings.Contains(text, "\n") {
-		return c.sendMultiline(target, text)
-	}
-
 	cmd := exec.Command("tmux", "send-keys", "-t", target, text, "Enter")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -86,10 +83,17 @@ func (c *Client) SendKeys(session, window, text string) error {
 	return nil
 }
 
-// sendMultiline handles multiline text by writing to a temp file,
-// loading it into a tmux buffer, pasting it, then pressing Enter.
-func (c *Client) sendMultiline(target, text string) error {
-	// Write text to a temp file for tmux load-buffer.
+// SendMessage delivers a message to a running Claude Code TUI via paste-buffer,
+// then submits with a separate Enter after a delay long enough for CC v2.1.105's
+// smart-paste UI to settle. Using a single `tmux send-keys text Enter` call
+// fails on CC v2.1.105 because the characters land fast enough to trigger
+// paste detection, which then swallows the trailing Enter.
+func (c *Client) SendMessage(session, window, text string) error {
+	target := session + ":" + window
+
+	// Strip trailing newlines — we send Enter ourselves.
+	text = strings.TrimRight(text, "\n")
+
 	tmpFile, err := os.CreateTemp("", "orch-msg-*.txt")
 	if err != nil {
 		return fmt.Errorf("creating temp file: %w", err)
@@ -102,22 +106,23 @@ func (c *Client) sendMultiline(target, text string) error {
 	}
 	tmpFile.Close()
 
-	// Load into tmux buffer.
 	cmd := exec.Command("tmux", "load-buffer", tmpFile.Name())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("loading tmux buffer: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	// Paste the buffer into the target pane.
-	cmd = exec.Command("tmux", "paste-buffer", "-t", target)
+	// -p: bracketed paste (so CC recognizes input as a paste, not typing).
+	// -d: delete the buffer after pasting.
+	cmd = exec.Command("tmux", "paste-buffer", "-p", "-d", "-t", target)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pasting tmux buffer: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	// Brief pause to let Claude Code process the paste.
-	time.Sleep(500 * time.Millisecond)
+	// Wait long enough for CC v2.1.105's smart-paste UI to finalize the paste
+	// and become ready to accept submit. 500ms isn't enough; 1500ms is robust
+	// across observed variance.
+	time.Sleep(1500 * time.Millisecond)
 
-	// Send Enter to submit.
 	cmd = exec.Command("tmux", "send-keys", "-t", target, "Enter")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("sending Enter to %q: %s: %w", target, strings.TrimSpace(string(out)), err)

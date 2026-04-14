@@ -96,6 +96,15 @@ func (m *Manager) Up(opts UpOpts) error {
 		return fmt.Errorf("registering agent: %w", err)
 	}
 
+	// Drop any stale pending schedules that were queued against this agent
+	// name in a different working directory. Without this, a zombie schedule
+	// from a prior run in project A would deliver to a fresh agent in project B.
+	if n, err := db.DeletePendingSchedulesForAgent(m.DB, opts.Name, absDir); err != nil {
+		m.Log.Warn("failed to purge stale schedules", "agent", opts.Name, "error", err)
+	} else if n > 0 {
+		m.Log.Info("purged stale schedules for rebound agent", "agent", opts.Name, "count", n)
+	}
+
 	// Pre-trust the directory so claude doesn't prompt.
 	if err := trustDirectory(absDir); err != nil {
 		m.Log.Warn("failed to pre-trust directory", "dir", absDir, "error", err)
@@ -130,7 +139,7 @@ func (m *Manager) Up(opts UpOpts) error {
 		absSpec, _ = filepath.EvalSymlinks(absSpec)
 		m.Log.Info("sending spec to agent", "agent", opts.Name, "spec", absSpec)
 		specMsg := fmt.Sprintf("Read and follow the instructions in %s", absSpec)
-		if err := m.Tmux.SendKeys(SessionName, opts.Name, specMsg); err != nil {
+		if err := m.Tmux.SendMessage(SessionName, opts.Name, specMsg); err != nil {
 			return fmt.Errorf("sending spec to agent: %w", err)
 		}
 	}
